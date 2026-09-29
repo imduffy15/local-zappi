@@ -43,7 +43,7 @@ class Relay:
     def allows_packet(self, data, direction, route):
         firmware_route = route.get('kind')=='firmware' or route['name'].startswith('firmware-')
         if firmware_route: return self.allow_firmware
-        if self.allow_firmware or self.control.serial is None: return True
+        if self.allow_firmware: return True
         return permitted(data, direction, self.control.key)
 
     def observe_extra(self, raw, source):

@@ -10,7 +10,7 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.loop=asyncio.get_running_loop();self.tmp=tempfile.TemporaryDirectory()
         self.up,self.up_p=await self.loop.create_datagram_endpoint(QueueProtocol,local_addr=('127.0.0.1',0))
-        cfg=dict(bind='127.0.0.1',allowed_clients=['127.0.0.1'],forward_upstream=True,
+        cfg=dict(allow_firmware_forwarding=True,bind='127.0.0.1',allowed_clients=['127.0.0.1'],forward_upstream=True,
                  routes=[dict(name='test',listen_port=0,upstream_ip='127.0.0.1',upstream_port=self.up.get_extra_info('sockname')[1])])
         self.r=Relay(cfg,self.tmp.name);await self.r.start()
         self.client,self.client_p=await self.loop.create_datagram_endpoint(QueueProtocol,local_addr=('127.0.0.1',0))
