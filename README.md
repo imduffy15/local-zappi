@@ -45,3 +45,9 @@ Tests cover byte-exact bidirectional forwarding, session reuse, source filtering
 ## Next protocol work
 
 Identify session/key negotiation and validate message framing against owned-device evidence; implement authentication/decryption and a simulated server before generating charging commands. Keep raw vendor firmware and personal packet captures outside this public repository. This project is independent research, not an official myenergi product.
+
+## Labeled app experiments
+
+Keep upstream forwarding enabled and avoid server rollouts while recording. Preserve the journal in a private experiment directory before its bounded rotation discards older data. Record UTC timestamps and human labels for each app action; separate actions by about ten seconds to distinguish them from periodic telemetry. A record of an app tap alone is not proof the charger accepted it.
+
+`python tools/analyze_journal.py PRIVATE_JOURNAL.jsonl` emits an offline UDP timeline, observed request/reply correlation bytes, response delays and byte-change ranges against the previous packet of the same direction/route/length. Those ranges include checksums, counters and possibly ciphertext; they are not decoded commands. Keep generated timelines and app labels private alongside the raw capture. Replay/injection and charging controls remain unimplemented.
