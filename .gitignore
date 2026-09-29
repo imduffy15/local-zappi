@@ -4,3 +4,7 @@ __pycache__/
 /data/
 admin-token
 traffic.jsonl*
+*private*.json
+session-keys.json
+*.pcap
+*.bin
