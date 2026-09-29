@@ -3,3 +3,9 @@
 !telemetry.py
 !ctl.py
 !Dockerfile
+!requirements.txt
+!protocol.py
+!control.py
+!web/
+!web/index.html
+!web/dashboard.js
