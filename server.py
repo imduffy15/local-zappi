@@ -87,6 +87,7 @@ class Relay:
                 if rec['type'] not in ('0x3510','0x3730'): rec.pop('origin_serial', None)
                 rec['received_at'] = time.time()
                 key = rec['type'] + ':' + str(rec.get('harvi_serial', rec.get('origin_serial', '')))
+                self.control.observe_device_record(bytes.fromhex(rec['raw']), 'ethernet')
                 self.latest[key] = rec
                 self.counts['telemetry_records'] += 1
                 self.mqtt.telemetry('ethernet', rec)

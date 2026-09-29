@@ -12,7 +12,7 @@ Experimental local server for observing and relaying a myenergi Zappi's propriet
 - Optional receive-only EtherType `0x88b5` telemetry parsing: device announcements and candidate Harvi CT records. Numeric units remain unverified.
 - Loopback HTTP API, bounded local raw traffic journal, session expiry and source allowlist.
 - Web dashboard with explicit mode controls, session status, raw CT readings and every observed Ethernet/decrypted UDP record.
-- Local mode packets tested through the firmware receiver in offline emulation; live commands are reported as sent, not confirmed.
+- Local mode packets tested through the firmware receiver in offline emulation; live requests remain pending until matching charger telemetry is received, with a 30-second confirmation timeout.
 - No factory commands, generic EEPROM writes, or automatic charging-mode changes.
 
 ## Run
@@ -49,7 +49,7 @@ Tests cover byte-exact bidirectional forwarding, session reuse, source filtering
 
 ## Next protocol work
 
-See [session findings](docs/sessions.md). Remaining work: connect fresh-session negotiation, implement independent application replies and session coordination with the vendor, decode actual mode readback, and validate boost/schedule/configuration controls. The dashboard intentionally disables unsupported write controls. Raw telemetry fields are available, but unverified CT values are not labelled with physical units. Keep raw vendor firmware and personal packet captures outside this public repository. This project is independent research, not an official myenergi product.
+See [session findings](docs/sessions.md). Remaining work: connect fresh-session negotiation, implement independent application replies and session coordination with the vendor, validate boost/schedule/configuration controls. The dashboard intentionally disables unsupported write controls. Charging mode is read from device telemetry; local or cloud command requests never set the displayed mode. Raw telemetry fields are available, but unverified CT values are not labelled with physical units. Keep raw vendor firmware and personal packet captures outside this public repository. This project is independent research, not an official myenergi product.
 
 ## Labeled app experiments
 

@@ -26,11 +26,10 @@ function render(s) {
   $('dashboard').classList.remove('hidden');$('locked').classList.add('hidden');
   $('connection').textContent=p.local_mode_control_ready?'Charger connected':'Waiting for verified session';
   $('connection').className=`badge ${p.local_mode_control_ready?'good':'warn'}`;
-  const local=p.last_local_command;
-  const localIsLatest=local && (!p.last_mode_command || local.sent_at>p.last_mode_command.received_at);
-  const observed=localIsLatest?local:p.last_mode_command;
-  $('mode').textContent=names[observed?.mode] || 'Not yet observed';
-  $('mode-detail').textContent=observed?.mode?(localIsLatest?`Local request sent ${ago(observed.sent_at)} — charger acceptance unconfirmed.`:`Cloud request observed ${ago(observed.received_at)} — charger acceptance unconfirmed.`):'No command captured. Changes on the physical charger are not decoded yet.';
+  const observed=p.device_mode;
+  const fresh=observed && Date.now()/1000-observed.received_at<30;
+  $('mode').textContent=fresh?(names[observed.mode] || 'Unknown'):'Unknown';
+  $('mode-detail').textContent=observed?`${fresh?'Reported by charger':'Last report (stale)'}: ${names[observed.mode]} · ${ago(observed.received_at)}`:'Waiting for the charger to report its mode.';
   const sessionMessages = {
     no_key: 'No device session key is provisioned.',
     awaiting_traffic: 'Waiting for fresh charger traffic. Session validation is automatic.',
@@ -42,7 +41,7 @@ function render(s) {
   $('control-state').textContent=!s.forward_upstream?'Enable app forwarding to establish a session.':p.local_mode_control_ready?'Local mode controls are available.':sessionMessages[p.session_state] || 'Session validation is automatic; waiting for charger traffic.';
   document.querySelectorAll('[data-mode]').forEach(button=>button.disabled=busy || !s.forward_upstream || !p.local_mode_control_ready);
   const last=p.last_local_command;
-  $('command-result').textContent=last?`${names[last.mode]} sent ${ago(last.sent_at)}. Device confirmation pending.`:'';
+  $('command-result').textContent=!last?'':last.status==='confirmed'?`${names[last.mode]} confirmed by charger ${ago(last.confirmed_at)}.`:last.status==='not_confirmed'?`${names[last.mode]} request was not confirmed within 30 seconds.`:`${names[last.mode]} requested ${ago(last.sent_at)}. Waiting for charger confirmation.`;
   $('forwarding').textContent=s.forward_upstream?'On':'Off';
   const sessionLabels = {no_key:'No key loaded',awaiting_traffic:'Waiting for traffic',recovering:'Recovering new session',key_mismatch:'Session key mismatch',recovery_save_failed:'Key could not be saved',verified:'Key verified'};
   $('session').textContent=p.local_mode_control_ready?'Verified':sessionLabels[p.session_state] || 'Waiting for traffic';
@@ -89,7 +88,7 @@ async function refresh() {
 $('login').addEventListener('submit',async e=>{e.preventDefault();token=$('token').value.trim();try{render(await api('/status'));sessionStorage.setItem('local-zappi-key',token);$('token').value='';message('');}catch(e){message(e.message);}});
 document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',async()=>{
   if(busy)return;busy=true;render(snapshot);
-  try{const result=await api('/mode',{mode:button.dataset.mode});message(`${names[result.mode]} command sent. Check the charger display to confirm.`);}
+  try{const result=await api('/mode',{mode:button.dataset.mode});message(`${names[result.mode]} requested. Waiting for the charger to report its mode.`);}
   catch(e){message(`Command not sent: ${e.message}`);}finally{busy=false;await refresh();}
 }));
 $('forward-toggle').addEventListener('click',async()=>{if(busy || !snapshot)return;busy=true;render(snapshot);try{await api('/config',{forward_upstream:!snapshot.forward_upstream});message('App forwarding updated.');}catch(e){message(e.message);}finally{busy=false;await refresh();}});

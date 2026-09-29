@@ -25,6 +25,7 @@ class Control:
         self.last_cloud_command = None
         self.last_mode_command = None
         self.last_local_command = None
+        self.device_mode = None
         self.target = None
         self.sequence = 0
         self.peer = None
@@ -152,12 +153,40 @@ class Control:
             kind = f'0x{int.from_bytes(raw[2:4], "little"):04x}'
             if kind in ('0x7979', '0x3510') and len(raw) >= 10 and int.from_bytes(raw[6:10], 'little') == self.serial:
                 self.target = (raw[1], raw[4] & 0x7f)
+            self.observe_device_record(raw, 'udp')
             record_id = kind+':'+str(raw[4])
             if record_id in self.records or len(self.records) < 128:
                 self.records[record_id] = {'type': kind, 'device_byte': raw[4],
                     'flags': raw[5], 'length': size, 'raw': raw.hex(), 'received_at': self.peer_at}
                 self.telemetry('udp', self.records[record_id])
             offset += size
+
+    def observe_device_record(self, raw, source):
+        # Firmware 5.794 builder 0x3c5b0: 3510 byte 23 low two bits,
+        # with stopped (internal mode >=4) encoded as zero.
+        if (len(raw) < 24 or raw[2:4] != b'\x10\x35'
+                or (raw[4] >> 3) & 7 != 2
+                or int.from_bytes(raw[6:10], 'little') != self.serial):
+            return
+        now = time.time()
+        mode = {0: 'stop', 1: 'fast', 2: 'eco', 3: 'eco_plus'}[raw[23] & 3]
+        changed = self.device_mode is None or self.device_mode['mode'] != mode
+        self.device_mode = {'mode': mode, 'received_at': now, 'source': source}
+        if changed:
+            self.emit('device_mode_observed', dict(self.device_mode))
+        command = self.last_local_command
+        if (command and command['status'] == 'sent_unconfirmed'
+                and now > command['sent_at'] and mode == command['mode']
+                and now - command['sent_at'] <= 30):
+            command.update(status='confirmed', confirmed_at=now)
+            self.emit('local_command_confirmed', dict(command))
+        self.expire_command(now)
+
+    def expire_command(self, now):
+        command = self.last_local_command
+        if command and command['status'] == 'sent_unconfirmed' and now-command['sent_at'] > 30:
+            command.update(status='not_confirmed', completed_at=now)
+            self.emit('local_command_not_confirmed', dict(command))
 
     def upstream(self, packet, route=""):
         self.observe_handshake('upstream', packet, route)
@@ -244,11 +273,13 @@ class Control:
         return self.last_local_command
 
     def status(self):
+        self.expire_command(time.time())
         return {'key_loaded': self.key is not None, 'local_mode_control_ready': self.ready(),
                 'session_state': self.session_state, 'session_recovered_at': self.recovered_at,
                 'last_valid_upstream_at': self.last_valid, 'counters': dict(self.counts),
                 'last_cloud_command': self.last_cloud_command,
                 'last_mode_command': self.last_mode_command,
                 'last_local_command': self.last_local_command,
+                'device_mode': self.device_mode,
                 'observed_cloud_config': self.observed_config,
                 'udp_records': self.records}
