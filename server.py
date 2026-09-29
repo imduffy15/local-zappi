@@ -167,7 +167,7 @@ class Upstream(asyncio.DatagramProtocol):
         self.last_seen = time.monotonic()
         r.counts['upstream_received'] += 1
         r.record('upstream', data, route=self.downstream.route['name'], peer=addr)
-        r.control.upstream(data)
+        r.control.upstream(data, self.downstream.route['name'])
         self.downstream.transport.sendto(data, self.peer)
         r.counts['device_replies'] += 1
     def error_received(self, exc): self.relay.counts['upstream_errors'] += 1

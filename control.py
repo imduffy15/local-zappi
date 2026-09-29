@@ -5,9 +5,12 @@ Does not interpret a sent command as confirmation that charging mode changed.
 import collections
 import json
 import pathlib
+import os
+import tempfile
 import struct
 import time
-from protocol import DATA_DEVICE, DATA_SERVER, crypt, open_packet, validate_server_packet
+from protocol import DATA_DEVICE, DATA_SERVER, HELLO_DEVICE, crypt, open_packet, validate_server_packet
+from recovery import SessionRecovery
 
 MODES = {'fast': 1, 'eco': 2, 'eco_plus': 3, 'stop': 4}
 
@@ -30,6 +33,8 @@ class Control:
         self.config_stage = {}
         self.observed_config = None
         self.records = {}
+        self.session_state = "no_key"
+        self.recovered_at = None
         self.emit = lambda kind, data: None
         self.telemetry = lambda source, record: None
         if self.key_path.exists():
@@ -40,8 +45,87 @@ class Control:
             self.key = bytes.fromhex(saved['session_key_hex'])
             if type(self.serial) is not int or len(self.key) != 32:
                 raise ValueError('invalid private session configuration')
+            self.session_state = 'awaiting_traffic'
+        self.recovery = SessionRecovery(self.serial)
+        self.restore_session()
+
+    def restore_session(self):
+        # The handshake may have happened while an older server was running.
+        # Replay only the bounded private journals, without restoring readiness.
+        recovered = None
+        latest_reply = None
+        for name in ('traffic.jsonl.1', 'traffic.jsonl'):
+            path = self.key_path.parent / name
+            if not path.exists():
+                continue
+            with path.open() as journal:
+                for line in journal:
+                    try:
+                        row = json.loads(line)
+                        if row.get('direction') not in ('device', 'upstream'):
+                            continue
+                        packet = bytes.fromhex(row['hex'])
+                        if (row['direction'] == 'upstream' and len(packet) >= 32
+                                and int.from_bytes(packet[:4], 'little') == DATA_SERVER
+                                and int.from_bytes(packet[12:16], 'little') == self.serial):
+                            latest_reply = packet
+                        candidate = self.recovery.observe(row['direction'], packet,
+                                                          row.get('route', ''), row['time'])
+                        if candidate is not None:
+                            recovered = candidate
+                    except (ValueError, KeyError, TypeError):
+                        continue
+        if recovered is not None and recovered != self.key:
+            try:
+                # Do not overwrite a newer provisioned key with an old exchange.
+                if latest_reply is not None:
+                    validate_server_packet(open_packet(latest_reply, recovered))
+                self.install_key(recovered)
+            except ValueError:
+                self.counts['journal_recovery_rejected'] += 1
+            except OSError:
+                self.counts['session_key_save_errors'] += 1
+                self.session_state = 'recovery_save_failed'
+        self.recovery.exchanges.clear()
+
+    def install_key(self, key):
+        # Persist privately and atomically before making the key active.
+        fd, name = tempfile.mkstemp(prefix='.session-', dir=self.key_path.parent)
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump({'serial': self.serial, 'session_key_hex': key.hex()}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(name, self.key_path)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+        self.key = key
+        self.peer = self.target = None
+        self.peer_at = self.verified_at = 0
+        self.config_stage = {}
+        self.recovered_at = time.time()
+        self.session_state = 'awaiting_traffic'
+        self.counts['session_keys_recovered'] += 1
+        self.emit('session_key_recovered', {'recovered_at': self.recovered_at})
+
+    def observe_handshake(self, direction, packet, route):
+        if (direction == 'device' and len(packet) == 192
+                and int.from_bytes(packet[:4], 'little') == HELLO_DEVICE
+                and int.from_bytes(packet[4:8], 'little') == self.serial):
+            self.peer = None
+            self.verified_at = 0
+            self.session_state = 'recovering'
+        candidate = self.recovery.observe(direction, packet, route, time.time())
+        if candidate is not None:
+            try:
+                self.install_key(candidate)
+            except OSError:
+                self.counts['session_key_save_errors'] += 1
+                self.session_state = 'recovery_save_failed'
 
     def device(self, packet, downstream, addr):
+        self.observe_handshake('device', packet, downstream.route['name'])
         if self.key is None or len(packet) < 38 or len(packet) % 16:
             return
         if int.from_bytes(packet[:4], 'little') != DATA_DEVICE or int.from_bytes(packet[8:12], 'little') != self.serial:
@@ -50,6 +134,7 @@ class Control:
         # Format sentinel plus bounded first telemetry record. Server replies
         # provide the stronger independent serial/envelope key validation.
         if plain[31] != 0xe3 or not 6 <= plain[32] <= len(plain)-32:
+            self.session_state = 'key_mismatch'
             self.counts['device_decode_rejected'] += 1
             self.peer = None
             return
@@ -73,7 +158,8 @@ class Control:
                 self.telemetry('udp', self.records[record_id])
             offset += size
 
-    def upstream(self, packet):
+    def upstream(self, packet, route=""):
+        self.observe_handshake('upstream', packet, route)
         if self.key is None or len(packet) < 32 or len(packet) % 16:
             return
         magic = int.from_bytes(packet[:4], 'little')
@@ -84,11 +170,13 @@ class Control:
         try:
             plain = validate_server_packet(open_packet(packet, self.key))
         except ValueError:
+            self.session_state = 'key_mismatch'
             self.counts['upstream_decode_rejected'] += 1
             self.verified_at = 0
             return
         now = time.time()
         self.verified_at = self.last_valid = now
+        self.session_state = 'verified'
         self.counts['upstream_decrypted'] += 1
         length, subtype = struct.unpack_from('<HH', plain, 28)
         if subtype != 3 or length < 70:
@@ -156,6 +244,7 @@ class Control:
 
     def status(self):
         return {'key_loaded': self.key is not None, 'local_mode_control_ready': self.ready(),
+                'session_state': self.session_state, 'session_recovered_at': self.recovered_at,
                 'last_valid_upstream_at': self.last_valid, 'counters': dict(self.counts),
                 'last_cloud_command': self.last_cloud_command,
                 'last_mode_command': self.last_mode_command,

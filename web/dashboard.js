@@ -28,13 +28,22 @@ function render(s) {
   $('connection').className=`badge ${p.local_mode_control_ready?'good':'warn'}`;
   const observed=p.last_mode_command;
   $('mode').textContent=names[observed?.mode] || 'Not yet observed';
-  $('mode-detail').textContent=observed?.mode?`Observed ${ago(observed.received_at)}`:'Use the app or local controls to issue a mode command.';
-  $('control-state').textContent=p.local_mode_control_ready?'Local mode controls are available.':'Waiting for recent, successfully decrypted charger traffic.';
+  $('mode-detail').textContent=observed?.mode?`Observed ${ago(observed.received_at)}`:'No command captured. Changes on the physical charger are not decoded yet.';
+  const sessionMessages = {
+    no_key: 'No device session key is provisioned.',
+    awaiting_traffic: 'Waiting for fresh charger traffic. Session validation is automatic.',
+    recovering: 'Charger reconnecting. Recovering and verifying its new session automatically.',
+    key_mismatch: 'Saved key does not match current traffic. Automatic recovery needs a complete reconnect handshake.',
+    recovery_save_failed: 'Could not save the recovered session key. Check server storage.',
+    verified: 'Session key verified. Waiting for fresh charger traffic and a control target.'
+  };
+  $('control-state').textContent=!s.forward_upstream?'Enable app forwarding to establish a session.':p.local_mode_control_ready?'Local mode controls are available.':sessionMessages[p.session_state] || 'Session validation is automatic; waiting for charger traffic.';
   document.querySelectorAll('[data-mode]').forEach(button=>button.disabled=busy || !s.forward_upstream || !p.local_mode_control_ready);
   const last=p.last_local_command;
   $('command-result').textContent=last?`${names[last.mode]} sent ${ago(last.sent_at)}. Device confirmation pending.`:'';
   $('forwarding').textContent=s.forward_upstream?'On':'Off';
-  $('session').textContent=p.local_mode_control_ready?'Verified':p.key_loaded?'Key loaded, awaiting validation':'No key loaded';
+  const sessionLabels = {no_key:'No key loaded',awaiting_traffic:'Waiting for traffic',recovering:'Recovering new session',key_mismatch:'Session key mismatch',recovery_save_failed:'Key could not be saved',verified:'Key verified'};
+  $('session').textContent=p.local_mode_control_ready?'Verified':sessionLabels[p.session_state] || 'Waiting for traffic';
   $('verified').textContent=ago(p.last_valid_upstream_at);
   $('uptime').textContent=`${Math.floor(s.uptime_seconds/3600)}h ${Math.floor(s.uptime_seconds/60)%60}m`;
   $('forward-toggle').textContent=s.forward_upstream?'Disable app forwarding':'Enable app forwarding';
