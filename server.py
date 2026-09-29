@@ -1,7 +1,7 @@
 """Local Zappi: byte-preserving UDP relay and passive Ethernet telemetry.
 No charging commands are generated; offline charging control is not implemented.
 """
-import asyncio, collections, hmac, http.server, json, os, pathlib, socket, threading, time
+import asyncio, collections, hmac, http.server, json, os, pathlib, signal, socket, threading, time
 
 class Relay:
     def __init__(self, config, state_dir):
@@ -193,7 +193,13 @@ async def main():
     if len(token)<32: raise ValueError('admin token too short')
     httpd = http.server.ThreadingHTTPServer(('127.0.0.1',config.get('admin_port',18087)),make_handler(relay,token))
     threading.Thread(target=httpd.serve_forever,daemon=True).start()
-    try: await asyncio.Event().wait()
-    finally: httpd.shutdown(); await relay.close()
+    stop = asyncio.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        relay.loop.add_signal_handler(sig, stop.set)
+    try: await stop.wait()
+    finally:
+        await asyncio.to_thread(httpd.shutdown)
+        httpd.server_close()
+        await relay.close()
 
 if __name__ == '__main__': asyncio.run(main())
