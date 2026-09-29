@@ -2,6 +2,7 @@
 import asyncio, collections, http.server, json, os, pathlib, signal, socket, threading, time
 from control import Control
 from mqtt_events import Publisher
+from offline import Offline
 
 class Relay:
     def __init__(self, config, state_dir):
@@ -22,6 +23,8 @@ class Relay:
         self.telemetry_socket = None
         self.capture = self.state_dir / 'traffic.jsonl'
         self.control = Control(self.state_dir)
+        self.offline = Offline(self.control, self.state_dir)
+        self.control.offline = not self.forward and self.offline.supported
         self.mqtt = Publisher(config.get('mqtt'), self.control.serial, self.state_dir)
         self.control.emit = self.mqtt.event
         self.control.telemetry = self.mqtt.telemetry
@@ -42,6 +45,9 @@ class Relay:
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp, self.flag_path)
+        self.control.cancel_pending()
+        self.control.offline = not value and self.offline.supported
+        self.control.verified_at = 0
         self.forward = value
         if not value:
             self.control.cancel_pending()
@@ -52,8 +58,8 @@ class Relay:
         return self.status()
 
     def send_mode(self, mode):
-        if not self.forward:
-            raise RuntimeError('local control currently requires upstream forwarding')
+        if not self.forward and not self.offline.supported:
+            raise RuntimeError('offline bootstrap configuration is not provisioned')
         return self.control.send_mode(mode)
 
     def mqtt_command(self, mode):
@@ -67,7 +73,7 @@ class Relay:
             self.mqtt.event('local_command_rejected', {'mode': mode, 'error': str(exc)})
 
     def status(self):
-        return dict(forward_upstream=self.forward, offline_control_supported=False,
+        return dict(forward_upstream=self.forward, offline_control_supported=self.offline.supported,
                     uptime_seconds=int(time.time()-self.started), counters=dict(self.counts),
                     sessions=len(self.sessions), last_telemetry=self.latest,
                     routes=self.config['routes'], protocol=self.control.status(), mqtt=self.mqtt.status())
@@ -140,9 +146,11 @@ class Downstream(asyncio.DatagramProtocol):
             r.counts['rejected_clients'] += 1; return
         r.counts['device_packets'] += 1
         r.record('device', data, route=self.route['name'], peer=addr)
-        r.control.device(data, self, addr)
+        valid = r.control.device(data, self, addr)
         if not r.forward:
-            r.counts['blocked_device_packets'] += 1; return
+            r.counts['blocked_device_packets'] += 1
+            r.offline.receive(data, self, addr, valid)
+            return
         key = (self.route['name'], addr)
         s = r.sessions.get(key)
         if s is None:

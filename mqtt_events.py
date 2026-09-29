@@ -107,7 +107,7 @@ class Publisher:
             if topic == 'state' and isinstance(value, dict):
                 protocol = value.get('protocol', {})
                 observed = protocol.get('device_mode') or {}
-                ready = (value.get('forward_upstream') and protocol.get('local_mode_control_ready')
+                ready = (protocol.get('local_mode_control_ready')
                          and time.time() - observed.get('received_at', 0) < 30)
                 self.client.publish(self.prefix+'/control/availability',
                                     'online' if ready else 'offline', qos=1, retain=False)

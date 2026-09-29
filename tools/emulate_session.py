@@ -10,6 +10,7 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS, UC_HOOK_CODE
 from unicorn.arm_const import *
 from protocol import crypt, hello_reply, KeyRecord, SessionNegotiator
 from control import Control, MODES
+from offline import keepalive
 
 STATE, KEYS, CONFIG, PRODUCT = 0x20010488, 0x20030000, 0x2000e400, 0x2002f000
 PACKET, PAYLOAD, STOP = 0x20040000, 0x20041000, 0x9f000
@@ -90,6 +91,9 @@ def run(image):
     d.receive(server.reply(d.hello(), 30000000))
     assert d.state() == 6, d.state()
     assert server.established
+    config_before = bytes(d.u.mem_read(CONFIG, 0x300))
+    d.receive(keepalive(bytes.fromhex('cfcacefacb040100')+bytes(24), SERIAL, session.key), entry=0x4b78d)
+    assert bytes(d.u.mem_read(CONFIG, 0x300)) == config_before, 'keepalive must not change settings'
     mode_results = []
     with tempfile.TemporaryDirectory() as directory:
         control = Control(directory)

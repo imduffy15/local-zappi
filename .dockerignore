@@ -11,3 +11,5 @@
 !web/
 !web/index.html
 !web/dashboard.js
+
+!offline.py

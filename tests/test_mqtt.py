@@ -75,13 +75,13 @@ class MQTTTest(unittest.TestCase):
         self.assertEqual(received, ['fast'])
         self.assertEqual(self.p.counts['retained_commands_ignored'], 1)
 
-    def test_control_unavailable_without_forwarding_or_fresh_state(self):
+    def test_control_available_offline_but_requires_fresh_state(self):
         import time
         self.p.connected = True
         state = {'forward_upstream': True, 'protocol': {'local_mode_control_ready': True,
                  'device_mode': {'mode': 'stop', 'received_at': time.time()}}}
         for forward, timestamp, expected in [(True, time.time(), 'online'),
-                (False, time.time(), 'offline'), (True, 0, 'offline')]:
+                (False, time.time(), 'online'), (True, 0, 'offline')]:
             state['forward_upstream'] = forward
             state['protocol']['device_mode']['received_at'] = timestamp
             self.p.publish('state', state)

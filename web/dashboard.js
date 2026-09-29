@@ -18,7 +18,7 @@ function render(s) {
   snapshot = s;
   const p = s.protocol || {}, observed = p.device_mode;
   const fresh = observed && Date.now()/1000-observed.received_at < 30;
-  const ready = s.forward_upstream && p.local_mode_control_ready;
+  const ready = p.local_mode_control_ready;
   const request = p.last_local_command;
   const pending = ['queued', 'sent_unconfirmed'].includes(request?.status);
   $('connection').textContent = ready ? 'Connected' : 'Reconnecting…';

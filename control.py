@@ -33,6 +33,7 @@ class Control:
         self.command_counter = None
         self.counter_at = 0
         self.peer = None
+        self.offline = False
         self.peer_at = 0
         self.verified_at = 0
         self.config_stage = {}
@@ -193,6 +194,8 @@ class Control:
         self.peer = (downstream, addr)
         self.peer_at = time.time()
         self.counts['device_decrypted'] += 1
+        if self.offline:
+            self.session_state = 'verified_local'
         offset = 32
         while offset < len(plain) and plain[offset]:
             # UDP encodes record length minus one; Ethernet uses full length.
@@ -212,6 +215,7 @@ class Control:
                 self.telemetry('udp', self.records[record_id])
             offset += size
         self.dispatch_pending()
+        return True
 
     def observe_device_record(self, raw, source):
         # Firmware 5.794 builder 0x3c5b0: 3510 byte 23 low two bits,
@@ -300,7 +304,7 @@ class Control:
         now = time.time()
         return (self.key is not None and self.peer is not None and self.target is not None
                 and self.target[1] > 1 and now-self.peer_at < 30
-                and now-self.verified_at < 30)
+                and (self.offline or now-self.verified_at < 30))
 
     def mode_packet(self, mode):
         if mode not in MODES:
