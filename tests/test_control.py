@@ -63,3 +63,19 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(self.c.target,(0x81,0x50))
         self.assertEqual(self.c.counts['record_decode_rejected'],0)
         self.assertEqual(bytes.fromhex(self.c.records['0x7979:80']['raw']),records[1])
+
+    def test_command_counter_and_sequence_follow_observed_command(self):
+        self.c.peer=(None,('127.0.0.1',1234))
+        self.c.peer_at=self.c.verified_at=time.time();self.c.target=(0x81,0x50)
+        self.c.command_counter=7
+        p=open_packet(self.c.mode_packet('fast'),self.key)
+        self.assertEqual(int.from_bytes(p[16:20],'little'),8)
+        self.assertEqual(int.from_bytes(p[40:42],'little'),0)
+        self.assertNotEqual(p[8:12],bytes(4))
+        row={'direction':'local-command','time':time.time(),'route':'test',
+             'hex':(p[:16]+crypt(p[16:],self.key)).hex()}
+        (pathlib.Path(self.temp.name)/'traffic.jsonl').write_text(json.dumps(row)+'\n')
+        restored=Control(self.temp.name)
+        self.assertEqual(restored.command_counter,8)
+        self.assertEqual(restored.sequence,0)
+        self.assertFalse(restored.ready())

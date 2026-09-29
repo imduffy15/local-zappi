@@ -8,6 +8,7 @@ import pathlib
 import os
 import tempfile
 import struct
+import secrets
 import time
 from protocol import DATA_DEVICE, DATA_SERVER, HELLO_DEVICE, crypt, open_packet, validate_server_packet
 from recovery import SessionRecovery
@@ -28,6 +29,7 @@ class Control:
         self.device_mode = None
         self.target = None
         self.sequence = 0
+        self.command_counter = None
         self.peer = None
         self.peer_at = 0
         self.verified_at = 0
@@ -55,6 +57,7 @@ class Control:
         # Replay only the bounded private journals, without restoring readiness.
         recovered = None
         latest_reply = None
+        command_candidates = collections.deque(maxlen=256)
         for name in ('traffic.jsonl.1', 'traffic.jsonl'):
             path = self.key_path.parent / name
             if not path.exists():
@@ -63,13 +66,15 @@ class Control:
                 for line in journal:
                     try:
                         row = json.loads(line)
-                        if row.get('direction') not in ('device', 'upstream'):
+                        if row.get('direction') not in ('device', 'upstream', 'local-command'):
                             continue
                         packet = bytes.fromhex(row['hex'])
                         if (row['direction'] == 'upstream' and len(packet) >= 32
                                 and int.from_bytes(packet[:4], 'little') == DATA_SERVER
                                 and int.from_bytes(packet[12:16], 'little') == self.serial):
                             latest_reply = packet
+                        if row['direction'] in ('upstream', 'local-command') and len(packet) == 80:
+                            command_candidates.append(packet)
                         candidate = self.recovery.observe(row['direction'], packet,
                                                           row.get('route', ''), row['time'])
                         if candidate is not None:
@@ -87,6 +92,19 @@ class Control:
             except OSError:
                 self.counts['session_key_save_errors'] += 1
                 self.session_state = 'recovery_save_failed'
+        if self.key is not None:
+            for packet in reversed(command_candidates):
+                try:
+                    plain = validate_server_packet(open_packet(packet, self.key))
+                    if (int.from_bytes(plain[:4], 'little') != DATA_SERVER
+                            or int.from_bytes(plain[12:16], 'little') != self.serial
+                            or struct.unpack_from('<HH', plain, 28) != (70, 3)):
+                        continue
+                    self.command_counter = int.from_bytes(plain[16:20], 'little')
+                    self.sequence = int.from_bytes(plain[40:42], 'little') & 7
+                    break
+                except ValueError:
+                    continue
         self.recovery.exchanges.clear()
 
     def install_key(self, key):
@@ -213,6 +231,7 @@ class Control:
             return
         selector, sequence = struct.unpack_from('<HH', plain, 38)
         self.sequence = sequence & 7
+        self.command_counter = int.from_bytes(plain[16:20], 'little')
         observed = {'received_at': now, 'selector': selector, 'sequence': sequence,
                     'target': plain[37]}
         if selector == 2:
@@ -250,10 +269,11 @@ class Control:
             raise ValueError('mode must be fast, eco, eco_plus or stop')
         if not self.ready():
             raise RuntimeError('no recently verified live session; command not sent')
-        self.sequence = (self.sequence+1) & 7
+        self.command_counter = ((self.command_counter or self.sequence)+1) & 0xffffffff
+        self.sequence = self.command_counter & 7
         packet = bytearray(80)
-        struct.pack_into('<4I', packet, 0, DATA_SERVER, 0x001504cb, 0, self.serial)
-        struct.pack_into('<IIIHH', packet, 16, 21, self.serial, int(time.time()), 70, 3)
+        struct.pack_into('<4I', packet, 0, DATA_SERVER, 0x001504cb, secrets.randbelow(0xffffffff)+1, self.serial)
+        struct.pack_into('<IIIHH', packet, 16, self.command_counter, self.serial, int(time.time()), 70, 3)
         network, target = self.target
         packet[32:38] = bytes((38, network, 0x6b, 0x6b, 1, target))
         struct.pack_into('<HH', packet, 38, 2, self.sequence)
