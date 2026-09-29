@@ -52,4 +52,18 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):self.r.set_forwarding(value)
         self.assertTrue(self.r.forward)
 
+    async def test_firmware_is_silent_by_default_then_opt_in_passes_bytes(self):
+        # Use loopback vendor/device peers: no physical update is attempted.
+        self.r.allow_firmware=False
+        firmware=b'\xee\x34\x12\xab'+bytes(range(60))
+        self.client.sendto(firmware,self.dest)
+        with self.assertRaises(asyncio.TimeoutError):await asyncio.wait_for(self.up_p.queue.get(),.1)
+        with self.assertRaises(asyncio.TimeoutError):await asyncio.wait_for(self.client_p.queue.get(),.1)
+        self.r.allow_firmware=True
+        self.r.set_forwarding(True)
+        peer=await self.exchange(firmware)
+        self.r.allow_firmware=False
+        self.up.sendto(firmware,peer)
+        with self.assertRaises(asyncio.TimeoutError):await asyncio.wait_for(self.client_p.queue.get(),.1)
+
 if __name__=='__main__':unittest.main()

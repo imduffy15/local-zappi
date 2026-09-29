@@ -43,7 +43,7 @@ QoS 1 can deliver duplicates; consumers should deduplicate by `event_id`. This i
 
 ## Home Assistant
 
-With `mqtt.home_assistant_discovery: true`, the server publishes retained discovery configuration for a **Charging mode** select and two diagnostic binary sensors on a **Local Zappi** device: **App forwarding** and **Local control ready**. The select uses reported device state, never optimistic updates, and becomes unavailable when forwarding, control readiness or fresh device state is missing. The diagnostics expire after 30 seconds without state updates. Discovery needs Home Assistant's MQTT integration connected to the same broker. No Home Assistant restart or charger firmware change is required.
+With `mqtt.home_assistant_discovery: true`, the server publishes retained discovery configuration for a **Charging mode** select, grid and charger power sensors, and two diagnostic binary sensors on a **Local Zappi** device: **App forwarding** and **Local control ready**. The select uses reported device state, never optimistic updates, and becomes unavailable when control readiness or fresh device state is missing. The diagnostics expire after 30 seconds without state updates. Discovery needs Home Assistant's MQTT integration connected to the same broker. No Home Assistant restart or charger firmware change is required.
 
 For automation triggers, subscribe to `local-zappi/<serial>/events` and filter the JSON `event` and `data` fields. For the entire stream:
 

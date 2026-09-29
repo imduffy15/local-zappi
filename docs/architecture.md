@@ -1,45 +1,27 @@
-# How local control and cloud forwarding work
+# Local control and optional cloud forwarding
 
-Local Zappi sends mode commands directly to the charger and reads its telemetry. The running relay shares the session negotiated between the charger and myenergi. It does not yet terminate two independent sessions or replace the cloud's handshake and application replies.
+With `forward_upstream: false` and private bootstrap provisioning, `offline.py` answers supported charger handshakes, persists the negotiated key before granting it, and replies to validated device polls with local keepalives. `Control.ready()` uses fresh validated charger traffic in this mode; it does not require a cloud reply. Startup without bootstrap provisioning cannot provide offline control.
 
-```mermaid
-flowchart LR
-    UI[Dashboard or HTTP client] -->|Local mode request| Relay[Local Zappi relay]
-    Charger[Zappi] <-->|Existing encrypted session| Relay
-    Relay <-->|Forwarded handshake and data| Cloud[myenergi]
-    Relay -->|Observed device mode and request outcome| UI
-    Relay -->|Telemetry, state and events| MQTT[MQTT broker]
-```
+With forwarding enabled, the relay shares the charger/cloud session and recovers supported replacement keys. It does not establish two simultaneous independent sessions or translate between different cloud and charger keys. Cloud automations can supersede local requests in forwarded mode.
 
-## What happens when you press Fast
+## Provisioning
 
-The server checks forwarding, recent decrypted device traffic, a known control target and a recently verified cloud reply. It queues the request, then constructs a new encrypted mode command on the next valid charger poll and sends it through the existing reverse-NAT route. It does not call the myenergi HTTP API to perform the mode change.
+Use product 3562, firmware 5.794 only within the verified scope. Place `bootstrap.json` in the private data directory, permissions 0600, containing `serial`, `product` (3562), `version` (5794), and `bootstrap_key_hex`. The bootstrap material must come from the exact owned firmware; do not substitute arbitrary keys or publish this file. `session-keys.json` stores the current session key. The bootstrap exchange installs a session key in RAM; it does not flash firmware.
 
-The request initially has status `queued`, then `sent_unconfirmed` once transmitted. Only a subsequent device report updates the displayed mode. Matching telemetry within 30 seconds confirms the request; otherwise its status becomes `not_confirmed`. A mode is a charging policy, not proof that the vehicle is drawing power.
+## Requests and state
 
-Device UDP telemetry continues to myenergi unchanged. The server also observes local Ethernet telemetry when capture is enabled. MQTT and the dashboard consume these observations without sending fabricated device state to the cloud.
+Mode commands queue until the next validated device poll. A successful send becomes `sent_unconfirmed`; only matching fresh device telemetry confirms it. Each stage has a 30-second timeout. The UI always displays observed mode, not the requested value.
 
-## Why cloud forwarding is still required
+Boost and configuration operations are serialized against local mode commands. Native command acknowledgements come from the charger telemetry header. Schedule writes first require a fresh 128-byte configuration, preserve unrelated bytes, and read the complete block back after writing. Boost readback verifies saved parameters; it is not a measurement of charging activity.
 
-The running server forwards myenergi's session negotiation and application replies. Its passive recovery code extracts and verifies supported replacement keys after reconnects. This keeps local command generation working after a charger reboot, but it does not make the server the session authority.
+Grid and charger power use explicit CT mappings and expire after 30 seconds. MQTT publishes current observations and Home Assistant discovery. There is no charge-history or household-consumption database.
 
-The code enforces that boundary:
+## Firmware boundary
 
-- `server.py` returns `offline_control_supported: false` in status
-- `POST /mode` rejects requests when `relay.forward` is false
-- `Control.ready()` requires both device traffic and a verified upstream reply less than 30 seconds old
-- `SessionNegotiator` in `protocol.py` is used by tests and the emulator, not the runtime relay
+Normal forwarding cannot enable firmware updates. `allow_firmware_forwarding` is a separate startup boolean, false by default. Firmware routes and recognized firmware envelopes are ignored unless enabled; unsupported server commands are also dropped. Opt-in forwards bytes unchanged to the configured vendor endpoints. No local firmware is served. See the README for the two forwarding options and restart requirement.
 
-Passive Ethernet observations can continue without cloud forwarding. Sustained independent command operation is not implemented, even if a previously negotiated key remains in memory briefly after an upstream outage.
+## Persistence and verification
 
-## What independent sessions still need
+The private directory holds bootstrap/session keys, forwarding state, command counters and bounded packet journals. Current reports and settings refresh after restart. There is no HTTP authentication; restrict the service to the intended network.
 
-The standalone negotiator establishes a server-chosen key against firmware emulation. Runtime integration still needs separate charger-facing and cloud-facing session state, the cloud-client exchange, application replies, and translation between the two sessions. It also needs coordination of counters, acknowledgements, command ordering and reconnects, plus live outage and recovery tests.
-
-The current sender tracks observed command counters and generates matching sequence bits. It does not isolate local commands from concurrent cloud commands. Existing automations and app requests can still supersede a locally confirmed mode.
-
-## Persistence and diagnostic limits
-
-The private data directory persists the access key, session key, forwarding setting and two bounded journals. Startup can recover a verified key and restore a recent command counter from matching journal records. Device reports, current readiness, observed configuration and the latest local request are held in memory and repopulate after a restart.
-
-The session readiness field describes the cryptographic traffic and target checks. The HTTP mode endpoint additionally checks forwarding. A ready session or successful UDP send does not prove that a mode request will be accepted. The [device confirmation loop](device-mode.md) supplies that later observation.
+Live tests confirmed all four modes with cloud forwarding disabled and recovery after a 90-second server outage. The full cold-start handshake passes the actual firmware emulator and loopback tests; a physical charger reboot into a new offline session has not been verified. Tests do not establish compatibility with other products or firmware versions.

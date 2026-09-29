@@ -1,6 +1,6 @@
 # Session protocol: firmware 5.794, product 3562
 
-The live relay decrypts device traffic, sends local mode commands, and automatically recovers replacement keys from supported cloud reconnect exchanges. It still relies on myenergi for negotiation and application replies. A separate server-chosen session negotiator passes firmware emulation but is not connected to runtime networking. See [runtime architecture](architecture.md) and [verified device control](device-mode.md).
+The live relay decrypts device traffic, sends local mode commands, and automatically recovers replacement keys from supported cloud reconnect exchanges. With forwarding disabled and private bootstrap provisioning, the runtime uses the server-chosen session negotiator and local keepalives. Cold handshakes pass firmware emulation; physical cold-reboot verification remains outstanding. See [runtime architecture](architecture.md) and [verified device control](device-mode.md).
 
 ## Encryption and identity checks
 

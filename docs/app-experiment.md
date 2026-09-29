@@ -20,4 +20,4 @@ Static receiver analysis identifies a path that decrypts the payload beginning a
 
 The subsequent [labeled mode experiment](mode-experiment.md) supplied the requested mode sequence. Session recovery then established AES-256-CTR decoding and selector-2 mode semantics. The control API now constructs fresh commands, with local Fast and Stop verified against device telemetry. Boost, schedules and minimum-green writes remain separate unfinished work.
 
-This experiment’s tools still perform offline analysis only. The live server requires cloud forwarding for its shared session; see [runtime architecture](architecture.md).
+This experiment’s tools still perform offline analysis only. The live server now supports a provisioned local session when forwarding is disabled; see [runtime architecture](architecture.md).

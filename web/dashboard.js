@@ -49,8 +49,9 @@ async function refresh() {
   catch (e) {
     $('connection').textContent = 'Disconnected';
     $('mode').textContent = 'Unavailable';
+    $('grid-power').textContent = $('charger-power').textContent = '—';
     $('message').textContent = 'Unable to reach your charger. Retrying…';
-    document.querySelectorAll('[data-mode]').forEach(button => {
+    document.querySelectorAll('[data-mode], [data-setting]').forEach(button => {
       button.disabled = true;
       button.setAttribute('aria-pressed', 'false');
     });

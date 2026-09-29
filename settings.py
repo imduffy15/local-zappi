@@ -85,7 +85,7 @@ class Settings:
             duration=row.get('duration_minutes');days=row.get('days')
             if type(duration) is not int or not 0<=duration<=24*60:raise ValueError('duration must be 0–1440 minutes')
             if not isinstance(days,list) or any(type(d) is not int or not 0<=d<=6 for d in days):raise ValueError('invalid timer days')
-            struct.pack_into('<HBBB',data,4+slot*6,duration,hour,minute,sum(1<<d for d in set(days)))
+            struct.pack_into('<HBBB',data,4+slot*6,duration,hour,minute,(data[8+slot*6]&0x80) | sum(1<<d for d in set(days)))
         self.start('schedules')
         self.expected=bytes(data)
         self.queue.extend((5,bytes(data[o:o+24]),struct.pack('<HBB',o,1,len(data[o:o+24]))) for o in range(0,128,24))

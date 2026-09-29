@@ -20,12 +20,13 @@ class SettingsTest(unittest.TestCase):
             with self.assertRaises(ValueError):Settings(self.c).boost(body)
     def test_schedule_write_preserves_every_unrelated_byte(self):
         self.ready();s=Settings(self.c)
-        data=bytearray(range(128));data[:4]=bytes.fromhex('1057a5f8')
+        data=bytearray(range(128));data[:4]=bytes.fromhex('1057a5f8');data[8]|=0x80
         s.config=bytes(data);s.config_at=time.time()
         rows=[{'start':'01:30','duration_minutes':60,'days':[0,2]} for _ in range(4)]
         s.schedules({'schedules':rows})
         expected=s.expected
         self.assertEqual(expected[28:],data[28:])
+        self.assertEqual(expected[8]&0x80,0x80)
         for slot in range(4):
             self.assertEqual(expected[9+6*slot],data[9+6*slot])
         self.assertEqual(decode_config(expected)['schedules'][0]['days'],[0,2])
