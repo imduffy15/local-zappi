@@ -36,3 +36,11 @@ class SettingsTest(unittest.TestCase):
         r[14:22]=struct.pack('<BBBBhh',8,0x11,1,0,-400,500)
         p.observe(r,'ethernet');self.assertEqual(p.status()['grid']['watts'],-400)
         p.values['grid']['received_at']-=31;self.assertIsNone(p.status()['grid'])
+
+    def test_native_header_ack_advances_write_and_rejection_fails(self):
+        s=Settings(self.c);s.result={'status':'pending'}
+        raw=bytearray(24);raw[2:4]=b'\x10\x35';struct.pack_into('<I',raw,6,self.c.serial)
+        s.awaiting={'kind':'write','sequence':4,'sent_at':time.time()}
+        raw[13]=0xbc;s.observe(raw,'udp');self.assertIsNone(s.awaiting)
+        s.awaiting={'kind':'write','sequence':5,'sent_at':time.time()}
+        raw[13]=0xb5;s.observe(raw,'udp');self.assertEqual(s.result['status'],'failed')

@@ -95,16 +95,10 @@ class Settings:
     def observe(self, raw, source):
         if (len(raw)>=24 and raw[2:4]==b'\x10\x35'
                 and int.from_bytes(raw[6:10],'little')==self.control.serial):
-            offset=24
-            while offset<len(raw):
-                size=raw[offset]&15
-                if size<1 or offset+size>len(raw):break
-                if size>=3 and raw[offset]==0xa3 and raw[offset+1]==1 and self.awaiting:
-                    ack=raw[offset+2]
-                    if self.awaiting.get('sequence')==ack&7:
-                        if not ack&8:self.fail('charger rejected the settings command')
-                        elif self.awaiting.get('kind')=='write':self.awaiting=None
-                offset+=size
+            ack=raw[13]
+            if (ack&0x80 and self.awaiting and self.awaiting.get('sequence')==ack&7):
+                if not ack&8:self.fail('charger rejected the settings command')
+                elif self.awaiting.get('kind')=='write':self.awaiting=None
         if len(raw)<14 or raw[2:4]!=b'||' or int.from_bytes(raw[6:10],'little')!=self.control.serial:return
         offset,region,size=struct.unpack_from('<HBB',raw,10)
         if region!=1 or not 0<size<=40 or offset+size>128 or len(raw)<14+size:return
