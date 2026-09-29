@@ -4,11 +4,12 @@ Executes the actual key-selection and key-install instructions. Synthetic keys
 only. Requires unicorn and cryptography; never opens a network socket.
 """
 from pathlib import Path
-import sys, struct, json
+import sys, struct, json, time, tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS, UC_HOOK_CODE
 from unicorn.arm_const import *
 from protocol import crypt, hello_reply, KeyRecord, SessionNegotiator
+from control import Control, MODES
 
 STATE, KEYS, CONFIG, PRODUCT = 0x20010488, 0x20030000, 0x2000e400, 0x2002f000
 PACKET, PAYLOAD, STOP = 0x20040000, 0x20041000, 0x9f000
@@ -49,14 +50,14 @@ class Device:
         self.calls.append(hex(a)); u.reg_write(UC_ARM_REG_R0, result)
         u.reg_write(UC_ARM_REG_PC, u.reg_read(UC_ARM_REG_LR))
 
-    def receive(self, packet):
+    def receive(self, packet, entry=0x41951):
         self.u.mem_write(PAYLOAD, packet + bytes(1500-len(packet)))
         self.put(PACKET+16, PAYLOAD)
         self.u.mem_write(PACKET+20, struct.pack('<Hh', len(packet), 0))
         self.u.reg_write(UC_ARM_REG_SP, 0x2007f000)
         self.u.reg_write(UC_ARM_REG_R1, PACKET)
         self.u.reg_write(UC_ARM_REG_LR, STOP|1)
-        self.u.emu_start(0x41951, STOP, count=100000)
+        self.u.emu_start(entry, STOP, count=100000)
         if self.u.reg_read(UC_ARM_REG_PC) != STOP:
             raise RuntimeError('handler did not finish')
 
@@ -89,8 +90,22 @@ def run(image):
     d.receive(server.reply(d.hello(), 30000000))
     assert d.state() == 6, d.state()
     assert server.established
+    mode_results = []
+    with tempfile.TemporaryDirectory() as directory:
+        control = Control(directory)
+        control.key, control.serial = session.key, SERIAL
+        control.peer = (None, None)
+        control.target = (0x81, 0x50)
+        control.peer_at = control.verified_at = time.time()
+        d.u.mem_write(CONFIG+0x293, b'\x09')
+        d.u.mem_write(CONFIG+0x20b, b'\x50')
+        for name, expected in MODES.items():
+            d.receive(control.mode_packet(name), entry=0x4b78d)
+            actual = d.u.mem_read(0x2000078d, 1)[0]
+            assert actual == expected, (name, actual)
+            mode_results.append({'mode': name, 'firmware_value': actual})
     return dict(result='pass', states=[1, 2, 5, 6], generated_device_hellos=len(d.sent),
-                scope=__doc__, physical_device_commands_sent=0)
+                scope=__doc__, modes=mode_results, physical_device_commands_sent=0)
 
 
 if __name__ == '__main__':
