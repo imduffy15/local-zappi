@@ -13,9 +13,9 @@ flowchart LR
 
 ## What happens when you press Fast
 
-The server checks forwarding, recent decrypted device traffic, a known control target and a recently verified cloud reply. It constructs a new encrypted mode command and sends it to the charger through the existing reverse-NAT route. It does not call the myenergi HTTP API to perform the mode change.
+The server checks forwarding, recent decrypted device traffic, a known control target and a recently verified cloud reply. It queues the request, then constructs a new encrypted mode command on the next valid charger poll and sends it through the existing reverse-NAT route. It does not call the myenergi HTTP API to perform the mode change.
 
-The request initially has status `sent_unconfirmed`. Only a subsequent device report updates the displayed mode. Matching telemetry within 30 seconds confirms the request; otherwise its status becomes `not_confirmed`. A mode is a charging policy, not proof that the vehicle is drawing power.
+The request initially has status `queued`, then `sent_unconfirmed` once transmitted. Only a subsequent device report updates the displayed mode. Matching telemetry within 30 seconds confirms the request; otherwise its status becomes `not_confirmed`. A mode is a charging policy, not proof that the vehicle is drawing power.
 
 Device UDP telemetry continues to myenergi unchanged. The server also observes local Ethernet telemetry when capture is enabled. MQTT and the dashboard consume these observations without sending fabricated device state to the cloud.
 

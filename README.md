@@ -10,7 +10,7 @@ Commands travel directly from this server to the charger. **The current server s
 | --- | --- |
 | Local mode control | Fast, Eco, Eco+ and Stop; HTTP API and dashboard without login |
 | Device mode readback | Ethernet or decrypted UDP telemetry drives the displayed mode, including physical-device changes |
-| Command confirmation | A request stays pending until matching device telemetry arrives; timeout after 30 seconds |
+| Command confirmation | Requests wait for a charger poll, then matching telemetry; each stage times out after 30 seconds |
 | Reconnect recovery | Automatically recovers keys from supported complete cloud handshakes, including captured exchanges found at startup |
 | Official app coexistence | Forwards device and cloud datagrams unchanged; existing cloud automations can still change the mode |
 | MQTT | Telemetry, state, mode commands, outcomes and Home Assistant discovery |
@@ -19,7 +19,9 @@ Commands travel directly from this server to the charger. **The current server s
 | Independent offline operation | Not implemented in the live relay; a standalone session negotiator passes firmware-emulator tests |
 | Harvi CT values | Raw channel fields; physical units are not verified |
 
-Live verification on 29 September 2026 confirmed local Fast in approximately 1.5 seconds and local Stop in approximately 2.5 seconds. Both transitions appeared in device telemetry forwarded upstream. All four mode packets pass the firmware emulator; the live local-command check covered Fast and Stop. These observations are not latency guarantees or compatibility claims for other firmware.
+Live verification on 29 September 2026 confirmed local Fast in approximately 1.5 seconds and local Stop in approximately 2.5 seconds. Both transitions appeared in device telemetry forwarded upstream. All four mode packets pass the firmware emulator. Subsequent live MQTT and browser tests confirmed all four modes with requests dispatched on charger polls. These observations are not latency guarantees or compatibility claims for other firmware.
+
+See [live dashboard, MQTT and forwarding tests](docs/live-e2e-2026-09-29.md) for the subsequent end-to-end checks.
 
 See [device state and confirmation](docs/device-mode.md) for the evidence and [runtime architecture](docs/architecture.md) for the remaining cloud dependency.
 
@@ -79,12 +81,12 @@ The API distinguishes a requested mode from a device report:
 | `GET /dashboard.js` | Dashboard script |
 | `GET /health` | Process liveness, not proof of charger connectivity |
 | `GET /status` | Forwarding, session diagnostics, telemetry, latest device mode and latest local request |
-| `POST /mode` | Body `{"mode":"fast"}`, `eco`, `eco_plus` or `stop`; returns 202 when sent |
+| `POST /mode` | Body `{"mode":"fast"}`, `eco`, `eco_plus` or `stop`; returns 202 when queued |
 | `POST /config` | Body `{"forward_upstream":true}` or `false`; persists the forwarding setting |
 
-Invalid mode/configuration bodies return HTTP 400. Mode requests return HTTP 409 when forwarding is disabled or the session is not ready. HTTP 202 means `sent_unconfirmed`, not that charging started.
+Invalid mode/configuration bodies return HTTP 400. Mode requests return HTTP 409 when forwarding is disabled or the session is not ready. HTTP 202 means `queued`, not that charging started. Commands transmit on the next valid charger poll, then become `sent_unconfirmed`.
 
-Read `protocol.device_mode` for the device's mode, source and receipt timestamp. The dashboard shows Unavailable when the report is at least 30 seconds old. Read `protocol.last_local_command.status` for `sent_unconfirmed`, `confirmed` or `not_confirmed`. Confirmation means fresh telemetry matched the request within 30 seconds; another actor could also have caused the change. The server does not automatically retry mode requests.
+Read `protocol.device_mode` for the device's mode, source and receipt timestamp. The dashboard shows Unavailable when the report is at least 30 seconds old. Read `protocol.last_local_command.status` for `queued`, `sent_unconfirmed`, `confirmed` or `not_confirmed`. Confirmation means fresh telemetry matched the request within 30 seconds; another actor could also have caused the change. The server does not automatically retry mode requests.
 
 The host helper `ctl.py` supports `status`, `on`, `off`, and `mode fast|eco|eco_plus|stop`. It currently assumes the local API is on port 18087; use the API directly for other installations. Startup and deployment do not issue charging-mode commands.
 

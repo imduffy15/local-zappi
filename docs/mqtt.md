@@ -21,6 +21,7 @@ Events distinguish requests, device reports and request outcomes:
 | `session_key_recovered` | A supported handshake produced a validated replacement key during runtime |
 | `cloud_command_observed` | Decoded cloud request, with `observed_unconfirmed` status |
 | `local_command_rejected` | Invalid MQTT request or control unavailable |
+| `local_command_queued` | Accepted request waiting for the next valid charger poll |
 | `local_command_sent` | Local request transmitted, with `sent_unconfirmed` status |
 | `device_mode_observed` | First device-mode report or a change in reported mode |
 | `local_command_confirmed` | Fresh device telemetry matched the local request within 30 seconds |
