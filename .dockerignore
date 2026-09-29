@@ -6,6 +6,7 @@
 !requirements.txt
 !protocol.py
 !control.py
+!mqtt_events.py
 !web/
 !web/index.html
 !web/dashboard.js

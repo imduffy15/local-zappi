@@ -42,6 +42,8 @@ function render(s) {
   const green=p.observed_cloud_config?.minimum_green_percent;
   $('green').textContent=green===undefined?'Not yet observed':`${green}% green / ${100-green}% grid`;
   pairs($('traffic'),s.counters);pairs($('crypto'),p.counters);
+  $('mqtt-state').textContent=s.mqtt?.enabled?`MQTT ${s.mqtt.connected?'connected':'reconnecting'} · ${s.mqtt.topic_prefix}/#`:'MQTT reporting is disabled.';
+  pairs($('mqtt-counts'),s.mqtt?.counters);
   $('cts').replaceChildren();
   for(const r of Object.values(s.last_telemetry || {})) for(const ct of r.ct_records || []) {
     const tr=document.createElement('tr');

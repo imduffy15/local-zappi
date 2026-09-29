@@ -5,6 +5,12 @@
     "192.0.2.1"
   ],
   "admin_port": 18087,
+  "mqtt": {
+    "enabled": false,
+    "host": "mqtt.example.lan",
+    "port": 1883,
+    "home_assistant_discovery": false
+  },
   "telemetry_interface": null,
   "device_mac": "00:00:00:00:00:00",
   "routes": [

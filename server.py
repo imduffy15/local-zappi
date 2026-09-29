@@ -1,6 +1,7 @@
 """Local Zappi relay, session observation and explicit local mode control."""
 import asyncio, collections, hmac, http.server, json, os, pathlib, signal, socket, threading, time
 from control import Control
+from mqtt_events import Publisher
 
 class Relay:
     def __init__(self, config, state_dir):
@@ -21,6 +22,9 @@ class Relay:
         self.telemetry_socket = None
         self.capture = self.state_dir / 'traffic.jsonl'
         self.control = Control(self.state_dir)
+        self.mqtt = Publisher(config.get('mqtt'), self.control.serial, self.state_dir)
+        self.control.emit = self.mqtt.event
+        self.control.telemetry = self.mqtt.telemetry
 
     def record(self, direction, data, **fields):
         # Bounded journal: at most roughly 2 x 10 MiB.
@@ -43,16 +47,19 @@ class Relay:
             for s in self.sessions.values():
                 if s.transport: s.transport.close()
             self.sessions.clear()
+        self.mqtt.event('forwarding_changed', {'forward_upstream': value})
         return self.status()
 
     def status(self):
         return dict(forward_upstream=self.forward, offline_control_supported=False,
                     uptime_seconds=int(time.time()-self.started), counters=dict(self.counts),
                     sessions=len(self.sessions), last_telemetry=self.latest,
-                    routes=self.config['routes'], protocol=self.control.status())
+                    routes=self.config['routes'], protocol=self.control.status(), mqtt=self.mqtt.status())
 
     async def start(self):
         self.loop = asyncio.get_running_loop()
+        self.mqtt.start()
+        self.mqtt_task = asyncio.create_task(self.publish_mqtt_state())
         for route in self.config['routes']:
             t, _ = await self.loop.create_datagram_endpoint(
                 lambda r=route: Downstream(self, r),
@@ -66,6 +73,12 @@ class Relay:
             self.loop.add_reader(s.fileno(), self.read_telemetry, records)
         self.expirer = asyncio.create_task(self.expire())
 
+    async def publish_mqtt_state(self):
+        while True:
+            if self.mqtt.enabled:
+                self.mqtt.publish('state', dict(schema_version=1, published_at=time.time(), **self.status()))
+            await asyncio.sleep(5)
+
     def read_telemetry(self, records):
         try:
             data = self.telemetry_socket.recv(65535)
@@ -76,6 +89,7 @@ class Relay:
                 key = rec['type'] + ':' + str(rec.get('harvi_serial', rec.get('origin_serial', '')))
                 self.latest[key] = rec
                 self.counts['telemetry_records'] += 1
+                self.mqtt.telemetry('ethernet', rec)
             self.record('ethernet', data)
         except (ValueError, OSError):
             self.counts['telemetry_errors'] += 1
@@ -90,6 +104,8 @@ class Relay:
 
     async def close(self):
         self.expirer.cancel()
+        self.mqtt_task.cancel()
+        await asyncio.to_thread(self.mqtt.close)
         for t in self.transports: t.close()
         for s in self.sessions.values():
             if s.transport: s.transport.close()

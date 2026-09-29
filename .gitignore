@@ -6,5 +6,6 @@ admin-token
 traffic.jsonl*
 *private*.json
 session-keys.json
+mqtt-credentials.json
 *.pcap
 *.bin

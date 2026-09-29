@@ -57,6 +57,12 @@ Keep upstream forwarding enabled and avoid server rollouts while recording. Pres
 
 `python tools/analyze_journal.py PRIVATE_JOURNAL.jsonl` emits an offline UDP timeline, observed request/reply correlation bytes, response delays and byte-change ranges against the previous packet of the same direction/route/length. Those ranges include checksums, counters and possibly ciphertext; they are not decoded commands. Keep generated timelines and app labels private alongside the raw capture. Do not replay captured packets. Local mode commands are freshly constructed from validated fields.
 
+## MQTT reporting
+
+Optional outbound MQTT reporting streams telemetry, observed cloud commands,
+local commands sent, forwarding changes and periodic status. Read-only Home
+Assistant discovery is supported. See [topics and setup](docs/mqtt.md).
+
 ## Private session provisioning
 
 The live service loads `/data/session-keys.json` if present, requiring mode 0600. Supply `serial` and `session_key_hex` privately. The recovery tool can produce these from an owned capture. Keys are never returned by the API. If the upstream session changes, controls fail closed until a matching key is available; forwarding continues unchanged. Do not assume session recovery from one capture is permanent provisioning.

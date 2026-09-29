@@ -30,6 +30,8 @@ class Control:
         self.config_stage = {}
         self.observed_config = None
         self.records = {}
+        self.emit = lambda kind, data: None
+        self.telemetry = lambda source, record: None
         if self.key_path.exists():
             if self.key_path.stat().st_mode & 0o077:
                 raise ValueError('session-keys.json must not be accessible to other users')
@@ -68,6 +70,7 @@ class Control:
             if record_id in self.records or len(self.records) < 128:
                 self.records[record_id] = {'type': kind, 'device_byte': raw[4],
                     'flags': raw[5], 'length': size, 'raw': raw.hex(), 'received_at': self.peer_at}
+                self.telemetry('udp', self.records[record_id])
             offset += size
 
     def upstream(self, packet):
@@ -116,6 +119,7 @@ class Control:
                     if len(merged) == 128 and merged[:4] == bytes.fromhex('1057a5f8'):
                         self.observed_config = {'received_at': now, 'minimum_green_percent': merged[53]}
         self.last_cloud_command = observed
+        self.emit('cloud_command_observed', dict(observed, status='observed_unconfirmed'))
 
     def ready(self):
         now = time.time()
@@ -147,6 +151,7 @@ class Control:
         self.last_local_command = {'mode': mode, 'sequence': self.sequence,
                                    'sent_at': time.time(), 'status': 'sent_unconfirmed'}
         self.counts['local_commands_sent'] += 1
+        self.emit('local_command_sent', dict(self.last_local_command))
         return self.last_local_command
 
     def status(self):
