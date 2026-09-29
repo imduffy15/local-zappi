@@ -1,0 +1,32 @@
+{
+  "forward_upstream": true,
+  "bind": "0.0.0.0",
+  "allowed_clients": [
+    "192.0.2.1"
+  ],
+  "admin_port": 18087,
+  "telemetry_interface": null,
+  "device_mac": "00:00:00:00:00:00",
+  "routes": [
+    {
+      "name": "director-primary",
+      "listen_port": 11887,
+      "upstream_ip": "15.197.208.241"
+    },
+    {
+      "name": "director-secondary",
+      "listen_port": 11888,
+      "upstream_ip": "3.33.142.202"
+    },
+    {
+      "name": "firmware-primary",
+      "listen_port": 11889,
+      "upstream_ip": "99.83.152.72"
+    },
+    {
+      "name": "firmware-secondary",
+      "listen_port": 11890,
+      "upstream_ip": "15.197.78.131"
+    }
+  ]
+}
