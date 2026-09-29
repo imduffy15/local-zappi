@@ -26,12 +26,26 @@ not synthesize cloud telemetry or acknowledge mode changes on the device's
 behalf. MQTT distinguishes `device_mode_observed`, `local_command_sent`,
 `local_command_confirmed`, and `local_command_not_confirmed`.
 
-## Outstanding live command investigation
+## Live control verification, 2026-09-29
 
-The owner reported that local Fast requests did not change the charger. Router
-capture proved the second request reached the charger-facing network with the
-expected Ethernet destination, reverse-NAT source and valid UDP checksum.
-Telemetry remained Stop. The packet passes the offline firmware-handler test,
-but live acceptance is unresolved. A same-session official-app command was
-requested as a comparison. Session validation and a UDP send alone must not be
-presented as successful physical control.
+The initial local Fast packets reached the charger-facing network with correct
+addressing and UDP checksums, but did not change its mode. A working official-app
+Fast command under the same session key had the same mode payload. The local
+sender differed in its outer header: it used a constant application counter of
+21 with an unrelated three-bit sequence, and zero in the varying outer ID field.
+
+The corrected sender uses a fresh nonzero outer ID and advances the application
+counter with its low three bits as the command sequence. It restores the last
+observed counter from validated, same-key command records in the bounded journal
+on startup. These header changes were tested together; the live experiment does
+not isolate which field caused the original rejection.
+
+Local Fast was confirmed by fresh charger telemetry approximately 1.5 seconds
+after transmission, then local Stop was confirmed approximately 2.5 seconds
+after transmission. The device was left stopped. UDP telemetry contained both
+transitions, all observed device packets were forwarded upstream, and MQTT
+remained connected. No cloud command was used to perform that local test.
+
+This remains a shared-session relay. Independent local/cloud sessions and their
+command coordination remain separate work. Existing cloud automations can issue
+new commands after a locally confirmed change.
