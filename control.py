@@ -133,7 +133,7 @@ class Control:
         plain = open_packet(packet, self.key)
         # Format sentinel plus bounded first telemetry record. Server replies
         # provide the stronger independent serial/envelope key validation.
-        if plain[31] != 0xe3 or not 6 <= plain[32] <= len(plain)-32:
+        if plain[31] != 0xe3 or not 6 <= plain[32] + 1 <= len(plain)-32:
             self.session_state = 'key_mismatch'
             self.counts['device_decode_rejected'] += 1
             self.peer = None
@@ -143,7 +143,8 @@ class Control:
         self.counts['device_decrypted'] += 1
         offset = 32
         while offset < len(plain) and plain[offset]:
-            size = plain[offset]
+            # UDP encodes record length minus one; Ethernet uses full length.
+            size = plain[offset] + 1
             if size < 6 or offset+size > len(plain):
                 self.counts['record_decode_rejected'] += 1
                 break

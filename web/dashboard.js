@@ -26,9 +26,11 @@ function render(s) {
   $('dashboard').classList.remove('hidden');$('locked').classList.add('hidden');
   $('connection').textContent=p.local_mode_control_ready?'Charger connected':'Waiting for verified session';
   $('connection').className=`badge ${p.local_mode_control_ready?'good':'warn'}`;
-  const observed=p.last_mode_command;
+  const local=p.last_local_command;
+  const localIsLatest=local && (!p.last_mode_command || local.sent_at>p.last_mode_command.received_at);
+  const observed=localIsLatest?local:p.last_mode_command;
   $('mode').textContent=names[observed?.mode] || 'Not yet observed';
-  $('mode-detail').textContent=observed?.mode?`Observed ${ago(observed.received_at)}`:'No command captured. Changes on the physical charger are not decoded yet.';
+  $('mode-detail').textContent=observed?.mode?(localIsLatest?`Local request sent ${ago(observed.sent_at)} — charger acceptance unconfirmed.`:`Cloud request observed ${ago(observed.received_at)} — charger acceptance unconfirmed.`):'No command captured. Changes on the physical charger are not decoded yet.';
   const sessionMessages = {
     no_key: 'No device session key is provisioned.',
     awaiting_traffic: 'Waiting for fresh charger traffic. Session validation is automatic.',

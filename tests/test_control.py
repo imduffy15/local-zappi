@@ -46,3 +46,20 @@ class ControlTests(unittest.TestCase):
     def test_private_file_permissions(self):
         (pathlib.Path(self.temp.name)/'session-keys.json').chmod(0o644)
         with self.assertRaises(ValueError):Control(self.temp.name)
+
+    def test_udp_records_use_length_minus_one_and_preserve_all_records(self):
+        class Downstream:
+            route = {'name': 'test'}
+        records=[]
+        for kind in (0x3510, 0x7979, 0x7777):
+            records.append(struct.pack('<BBHBBI',9,0x81,kind,0x50,1,12345678))
+        plain=bytearray(64)
+        struct.pack_into('<III',plain,0,0xfacecacf,0,12345678)
+        plain[31]=0xe3
+        plain[32:62]=b''.join(records)
+        plain[16:]=crypt(bytes(plain[16:]),self.key)
+        self.c.device(bytes(plain),Downstream(),('127.0.0.1',87))
+        self.assertEqual(len(self.c.records),3)
+        self.assertEqual(self.c.target,(0x81,0x50))
+        self.assertEqual(self.c.counts['record_decode_rejected'],0)
+        self.assertEqual(bytes.fromhex(self.c.records['0x7979:80']['raw']),records[1])
