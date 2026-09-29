@@ -2,6 +2,7 @@
 
 Does not interpret a sent command as confirmation that charging mode changed.
 """
+import hashlib
 import collections
 import json
 import pathlib
@@ -30,6 +31,7 @@ class Control:
         self.target = None
         self.sequence = 0
         self.command_counter = None
+        self.counter_at = 0
         self.peer = None
         self.peer_at = 0
         self.verified_at = 0
@@ -51,6 +53,7 @@ class Control:
             self.session_state = 'awaiting_traffic'
         self.recovery = SessionRecovery(self.serial)
         self.restore_session()
+        self.restore_counter()
 
     def restore_session(self):
         # The handshake may have happened while an older server was running.
@@ -74,7 +77,7 @@ class Control:
                                 and int.from_bytes(packet[12:16], 'little') == self.serial):
                             latest_reply = packet
                         if row['direction'] in ('upstream', 'local-command') and len(packet) == 80:
-                            command_candidates.append(packet)
+                            command_candidates.append((row['time'], packet))
                         candidate = self.recovery.observe(row['direction'], packet,
                                                           row.get('route', ''), row['time'])
                         if candidate is not None:
@@ -93,19 +96,46 @@ class Control:
                 self.counts['session_key_save_errors'] += 1
                 self.session_state = 'recovery_save_failed'
         if self.key is not None:
-            for packet in reversed(command_candidates):
+            for timestamp, packet in reversed(command_candidates):
                 try:
                     plain = validate_server_packet(open_packet(packet, self.key))
                     if (int.from_bytes(plain[:4], 'little') != DATA_SERVER
                             or int.from_bytes(plain[12:16], 'little') != self.serial
                             or struct.unpack_from('<HH', plain, 28) != (70, 3)):
                         continue
+                    self.counter_at = timestamp
                     self.command_counter = int.from_bytes(plain[16:20], 'little')
                     self.sequence = int.from_bytes(plain[40:42], 'little') & 7
                     break
                 except ValueError:
                     continue
         self.recovery.exchanges.clear()
+
+    def restore_counter(self):
+        path = self.key_path.parent / 'command-counter.json'
+        if self.key is None or not path.exists(): return
+        try:
+            saved = json.loads(path.read_text())
+            if (saved['session'] == hashlib.sha256(self.key).hexdigest()
+                    and saved['updated_at'] >= self.counter_at
+                    and type(saved['counter']) is int and 0 <= saved['counter'] <= 0xffffffff):
+                self.command_counter = saved['counter']
+                self.counter_at = saved['updated_at']
+                self.sequence = self.command_counter & 7
+        except (ValueError, KeyError, TypeError):
+            self.counts['counter_restore_errors'] += 1
+
+    def save_counter(self):
+        fd, name = tempfile.mkstemp(prefix='.counter-', dir=self.key_path.parent)
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump({'session': hashlib.sha256(self.key).hexdigest(),
+                           'counter': self.command_counter, 'updated_at': self.counter_at}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(name, self.key_path.parent / 'command-counter.json')
+        finally:
+            if os.path.exists(name): os.unlink(name)
 
     def install_key(self, key):
         # Persist privately and atomically before making the key active.
@@ -120,6 +150,9 @@ class Control:
             if os.path.exists(name):
                 os.unlink(name)
         self.key = key
+        self.command_counter = None
+        self.counter_at = 0
+        self.sequence = 0
         self.peer = self.target = None
         self.peer_at = self.verified_at = 0
         self.config_stage = {}
@@ -232,6 +265,9 @@ class Control:
         selector, sequence = struct.unpack_from('<HH', plain, 38)
         self.sequence = sequence & 7
         self.command_counter = int.from_bytes(plain[16:20], 'little')
+        self.counter_at = now
+        try: self.save_counter()
+        except OSError: self.counts['counter_save_errors'] += 1
         observed = {'received_at': now, 'selector': selector, 'sequence': sequence,
                     'target': plain[37]}
         if selector == 2:
@@ -271,6 +307,10 @@ class Control:
             raise RuntimeError('no recently verified live session; command not sent')
         self.command_counter = ((self.command_counter or self.sequence)+1) & 0xffffffff
         self.sequence = self.command_counter & 7
+        self.counter_at = time.time()
+        try: self.save_counter()
+        except OSError as exc:
+            raise RuntimeError('could not save command counter; command not sent') from exc
         packet = bytearray(80)
         struct.pack_into('<4I', packet, 0, DATA_SERVER, 0x001504cb, secrets.randbelow(0xffffffff)+1, self.serial)
         struct.pack_into('<IIIHH', packet, 16, self.command_counter, self.serial, int(time.time()), 70, 3)

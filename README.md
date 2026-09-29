@@ -84,7 +84,7 @@ The API distinguishes a requested mode from a device report:
 
 Invalid mode/configuration bodies return HTTP 400. Mode requests return HTTP 409 when forwarding is disabled or the session is not ready. HTTP 202 means `sent_unconfirmed`, not that charging started.
 
-Read `protocol.device_mode` for the device's mode, source and receipt timestamp. The dashboard shows Unknown when the report is at least 30 seconds old. Read `protocol.last_local_command.status` for `sent_unconfirmed`, `confirmed` or `not_confirmed`. Confirmation means fresh telemetry matched the request within 30 seconds; another actor could also have caused the change. The server does not automatically retry mode requests.
+Read `protocol.device_mode` for the device's mode, source and receipt timestamp. The dashboard shows Unavailable when the report is at least 30 seconds old. Read `protocol.last_local_command.status` for `sent_unconfirmed`, `confirmed` or `not_confirmed`. Confirmation means fresh telemetry matched the request within 30 seconds; another actor could also have caused the change. The server does not automatically retry mode requests.
 
 The host helper `ctl.py` supports `status`, `on`, `off`, and `mode fast|eco|eco_plus|stop`. It currently assumes the local API is on port 18087; use the API directly for other installations. Startup and deployment do not issue charging-mode commands.
 

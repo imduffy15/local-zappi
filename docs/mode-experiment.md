@@ -25,6 +25,6 @@ Across these seven provisionally labeled samples, `0x42` is the only byte that i
 
 ## Subsequent implementation
 
-Session recovery and firmware analysis established the decrypted envelope, selector-2 command layout and device-mode readback. The authenticated API now accepts requests for all four modes. The server constructs encrypted commands and confirms matching device telemetry. Local Fast and Stop were verified live; all four modes pass firmware emulation. See [device-mode verification](device-mode.md) for the header correction and evidence limits.
+Session recovery and firmware analysis established the decrypted envelope, selector-2 command layout and device-mode readback. The API now accepts requests for all four modes. The server constructs encrypted commands and confirms matching device telemetry. Local Fast and Stop were verified live; all four modes pass firmware emulation. See [device-mode verification](device-mode.md) for the header correction and evidence limits.
 
 The capture tools remain offline and never replay packets. No local charging command was generated during this original labeled experiment. The later live verification is a separate result.

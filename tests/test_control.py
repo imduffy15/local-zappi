@@ -79,3 +79,23 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(restored.command_counter,8)
         self.assertEqual(restored.sequence,0)
         self.assertFalse(restored.ready())
+
+    def test_counter_survives_journal_rotation_and_is_scoped_to_session(self):
+        self.c.peer=(None,('127.0.0.1',1234))
+        self.c.peer_at=self.c.verified_at=time.time();self.c.target=(0x81,0x50)
+        self.c.command_counter=5
+        self.c.mode_packet('fast')
+        restored=Control(self.temp.name)
+        self.assertEqual(restored.command_counter,6)
+        self.assertFalse(restored.ready())
+        restored.install_key(bytes(reversed(self.key)))
+        other=Control(self.temp.name)
+        self.assertIsNone(other.command_counter)
+
+    def test_counter_save_failure_prevents_packet_creation(self):
+        from unittest.mock import patch
+        self.c.peer=(None,('127.0.0.1',1234))
+        self.c.peer_at=self.c.verified_at=time.time();self.c.target=(0x81,0x50)
+        with patch.object(self.c, 'save_counter', side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(RuntimeError, 'command not sent'):
+                self.c.mode_packet('fast')
