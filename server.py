@@ -5,6 +5,7 @@ from mqtt_events import Publisher
 from offline import Offline
 from settings import Settings
 from power import Power
+from firmware_policy import permitted
 
 class Relay:
     def __init__(self, config, state_dir):
@@ -17,6 +18,8 @@ class Relay:
             self.forward = json.loads(self.flag_path.read_text())['forward_upstream']
         if type(self.forward) is not bool:
             raise ValueError('forward_upstream must be a boolean')
+        self.allow_firmware = config.get('allow_firmware_forwarding', False)
+        if type(self.allow_firmware) is not bool: raise ValueError('allow_firmware_forwarding must be a boolean')
         self.started = time.time()
         self.counts = collections.Counter()
         self.sessions = {}
@@ -33,6 +36,15 @@ class Relay:
         self.mqtt = Publisher(config.get('mqtt'), self.control.serial, self.state_dir)
         self.control.emit = self.mqtt.event
         self.control.telemetry = self.mqtt.telemetry
+
+    def forwards(self, route):
+        return self.allow_firmware if route.get('kind')=='firmware' or route['name'].startswith('firmware-') else self.forward
+
+    def allows_packet(self, data, direction, route):
+        firmware_route = route.get('kind')=='firmware' or route['name'].startswith('firmware-')
+        if firmware_route: return self.allow_firmware
+        if self.allow_firmware or self.control.serial is None: return True
+        return permitted(data, direction, self.control.key)
 
     def observe_extra(self, raw, source):
         self.settings.observe(raw, source)
@@ -84,7 +96,7 @@ class Relay:
             self.mqtt.event('local_command_rejected', {'mode': mode, 'error': str(exc)})
 
     def status(self):
-        return dict(forward_upstream=self.forward, offline_control_supported=self.offline.supported,
+        return dict(forward_upstream=self.forward, allow_firmware_forwarding=self.allow_firmware, offline_control_supported=self.offline.supported,
                     uptime_seconds=int(time.time()-self.started), counters=dict(self.counts),
                     sessions=len(self.sessions), last_telemetry=self.latest,
                     routes=self.config['routes'], protocol=self.control.status(), settings=self.settings.status(), power=self.power.status(), mqtt=self.mqtt.status())
@@ -155,11 +167,13 @@ class Downstream(asyncio.DatagramProtocol):
         r = self.relay
         if addr[0] not in r.config['allowed_clients']:
             r.counts['rejected_clients'] += 1; return
+        if not r.allows_packet(data, 'device', self.route):
+            r.counts['ignored_firmware_or_unsupported_device_packets'] += 1; return
         r.counts['device_packets'] += 1
         r.record('device', data, route=self.route['name'], peer=addr)
         valid = r.control.device(data, self, addr)
         if valid: r.settings.poll()
-        if not r.forward:
+        if not r.forwards(self.route):
             r.counts['blocked_device_packets'] += 1
             r.offline.receive(data, self, addr, valid)
             return
@@ -187,7 +201,7 @@ class Upstream(asyncio.DatagramProtocol):
             route = self.downstream.route
             transport, _ = await r.loop.create_datagram_endpoint(
                 lambda: self, remote_addr=(route['upstream_ip'], route.get('upstream_port',87)))
-            if not r.forward or r.sessions.get(self.key) is not self:
+            if not r.forwards(route) or r.sessions.get(self.key) is not self:
                 transport.close(); return
             self.transport = transport
             for data in self.pending: self.send(data)
@@ -196,12 +210,14 @@ class Upstream(asyncio.DatagramProtocol):
             r.counts['connect_errors'] += 1
             if r.sessions.get(self.key) is self: r.sessions.pop(self.key, None)
     def send(self, data):
-        if self.relay.forward and self.relay.sessions.get(self.key) is self:
+        if self.relay.forwards(self.downstream.route) and self.relay.sessions.get(self.key) is self:
             self.transport.sendto(data)
             self.relay.counts['upstream_sent'] += 1
     def datagram_received(self, data, addr):
         r = self.relay
-        if not r.forward or r.sessions.get(self.key) is not self: return
+        if not r.forwards(self.downstream.route) or r.sessions.get(self.key) is not self: return
+        if not r.allows_packet(data, 'upstream', self.downstream.route):
+            r.counts['ignored_firmware_or_unsupported_upstream_packets'] += 1; return
         self.last_seen = time.monotonic()
         r.counts['upstream_received'] += 1
         r.record('upstream', data, route=self.downstream.route['name'], peer=addr)

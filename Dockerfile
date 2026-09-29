@@ -5,6 +5,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py telemetry.py ctl.py protocol.py control.py recovery.py offline.py settings.py power.py mqtt_events.py ./
+COPY server.py telemetry.py ctl.py protocol.py control.py recovery.py offline.py settings.py power.py firmware_policy.py mqtt_events.py ./
 COPY web ./web
 CMD ["python", "/app/server.py"]

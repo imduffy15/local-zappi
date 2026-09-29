@@ -34,5 +34,6 @@
       "listen_port": 11890,
       "upstream_ip": "15.197.78.131"
     }
-  ]
+  ],
+  "allow_firmware_forwarding": false
 }
