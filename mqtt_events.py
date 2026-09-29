@@ -77,6 +77,15 @@ class Publisher:
                            'manufacturer': 'local-zappi', 'model': 'Zappi local bridge'}}
             client.publish(f'homeassistant/select/local_zappi_{self.serial}/charging_mode/config',
                            json.dumps(config), qos=1, retain=True)
+            for name in ('grid', 'charger'):
+                config = {'name': name.title()+' power', 'unique_id': f'local_zappi_{self.serial}_{name}_power',
+                    'state_topic': self.prefix+'/state', 'availability_topic': self.prefix+'/availability',
+                    'value_template': '{{ value_json.power.'+name+'.watts if value_json.power.'+name+' else None }}',
+                    'unit_of_measurement': 'W', 'device_class': 'power', 'state_class': 'measurement',
+                    'expire_after': 30,
+                    'device': {'identifiers': [f'local_zappi_{self.serial}'], 'name': 'Local Zappi'}}
+                client.publish(f'homeassistant/sensor/local_zappi_{self.serial}/{name}_power/config',
+                               json.dumps(config), qos=1, retain=True)
         self.event('bridge_connected', {'boot_id': self.boot_id})
 
     def on_message(self, client, userdata, message):

@@ -43,6 +43,7 @@ class Control:
         self.recovered_at = None
         self.emit = lambda kind, data: None
         self.telemetry = lambda source, record: None
+        self.observe_extra = lambda raw, source: None
         if self.key_path.exists():
             if self.key_path.stat().st_mode & 0o077:
                 raise ValueError('session-keys.json must not be accessible to other users')
@@ -218,6 +219,7 @@ class Control:
         return True
 
     def observe_device_record(self, raw, source):
+        self.observe_extra(raw, source)
         # Firmware 5.794 builder 0x3c5b0: 3510 byte 23 low two bits,
         # with stopped (internal mode >=4) encoded as zero.
         if (len(raw) < 24 or raw[2:4] != b'\x10\x35'

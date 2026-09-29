@@ -3,6 +3,8 @@ import asyncio, collections, http.server, json, os, pathlib, signal, socket, thr
 from control import Control
 from mqtt_events import Publisher
 from offline import Offline
+from settings import Settings
+from power import Power
 
 class Relay:
     def __init__(self, config, state_dir):
@@ -23,11 +25,18 @@ class Relay:
         self.telemetry_socket = None
         self.capture = self.state_dir / 'traffic.jsonl'
         self.control = Control(self.state_dir)
+        self.settings = Settings(self.control)
+        self.power = Power(config.get("power_channels"))
+        self.control.observe_extra = self.observe_extra
         self.offline = Offline(self.control, self.state_dir)
         self.control.offline = not self.forward and self.offline.supported
         self.mqtt = Publisher(config.get('mqtt'), self.control.serial, self.state_dir)
         self.control.emit = self.mqtt.event
         self.control.telemetry = self.mqtt.telemetry
+
+    def observe_extra(self, raw, source):
+        self.settings.observe(raw, source)
+        self.power.observe(raw, source)
 
     def record(self, direction, data, **fields):
         # Bounded journal: at most roughly 2 x 10 MiB.
@@ -46,6 +55,7 @@ class Relay:
             os.fsync(f.fileno())
         os.replace(temp, self.flag_path)
         self.control.cancel_pending()
+        self.settings.fail('forwarding changed')
         self.control.offline = not value and self.offline.supported
         self.control.verified_at = 0
         self.forward = value
@@ -58,6 +68,7 @@ class Relay:
         return self.status()
 
     def send_mode(self, mode):
+        if self.settings.busy(): raise RuntimeError('charger settings request pending')
         if not self.forward and not self.offline.supported:
             raise RuntimeError('offline bootstrap configuration is not provisioned')
         return self.control.send_mode(mode)
@@ -76,7 +87,7 @@ class Relay:
         return dict(forward_upstream=self.forward, offline_control_supported=self.offline.supported,
                     uptime_seconds=int(time.time()-self.started), counters=dict(self.counts),
                     sessions=len(self.sessions), last_telemetry=self.latest,
-                    routes=self.config['routes'], protocol=self.control.status(), mqtt=self.mqtt.status())
+                    routes=self.config['routes'], protocol=self.control.status(), settings=self.settings.status(), power=self.power.status(), mqtt=self.mqtt.status())
 
     async def start(self):
         self.loop = asyncio.get_running_loop()
@@ -147,6 +158,7 @@ class Downstream(asyncio.DatagramProtocol):
         r.counts['device_packets'] += 1
         r.record('device', data, route=self.route['name'], peer=addr)
         valid = r.control.device(data, self, addr)
+        if valid: r.settings.poll()
         if not r.forward:
             r.counts['blocked_device_packets'] += 1
             r.offline.receive(data, self, addr, valid)
@@ -226,11 +238,20 @@ def make_handler(relay):
             value = asyncio.run_coroutine_threadsafe(status(), relay.loop).result(5)
             self.reply(200, value)
         def do_POST(self):
-            if self.path not in ('/config', '/mode'): self.reply(404, {'error':'not found'}); return
+            if self.path not in ('/config', '/mode', '/boost', '/schedules', '/settings/read'): self.reply(404, {'error':'not found'}); return
             try:
                 n = int(self.headers.get('Content-Length','0'))
                 if not 0 < n <= 1024: raise ValueError('invalid body length')
                 body = json.loads(self.rfile.read(n))
+                if self.path in ('/boost','/schedules','/settings/read'):
+                    if not isinstance(body,dict): raise ValueError('expected object')
+                    async def settings():
+                        if self.path=='/boost': return relay.settings.boost(body)
+                        if self.path=='/schedules': return relay.settings.schedules(body)
+                        return relay.settings.refresh()
+                    value = asyncio.run_coroutine_threadsafe(settings(), relay.loop).result(5)
+                    self.reply(202,value)
+                    return
                 if self.path == '/mode':
                     if not isinstance(body, dict) or set(body) != {'mode'} or not isinstance(body['mode'], str):
                         raise ValueError('expected mode only')

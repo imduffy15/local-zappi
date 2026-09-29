@@ -13,3 +13,5 @@
 !web/dashboard.js
 
 !offline.py
+!settings.py
+!power.py

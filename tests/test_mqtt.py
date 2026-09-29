@@ -38,9 +38,9 @@ class MQTTTest(unittest.TestCase):
         self.assertEqual((topic, payload), ('local-zappi/1234/availability', 'online'))
         self.assertTrue(opts['retain'])
         discovery = [json.loads(payload) for topic, payload, opts in self.p.client.messages if topic.startswith('homeassistant/')]
-        self.assertEqual(len(discovery), 3)
+        self.assertEqual(len(discovery), 5)
         self.assertEqual(self.p.client.subscription, ('local-zappi/1234/mode/set', 1))
-        control = discovery[-1]
+        control = next(row for row in discovery if 'command_topic' in row)
         self.assertFalse(control['optimistic'])
         self.assertFalse(control['retain'])
         self.assertEqual(control['command_topic'], 'local-zappi/1234/mode/set')

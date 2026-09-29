@@ -11,6 +11,7 @@ from unicorn.arm_const import *
 from protocol import crypt, hello_reply, KeyRecord, SessionNegotiator
 from control import Control, MODES
 from offline import keepalive
+from settings import Settings, packet as settings_packet
 
 STATE, KEYS, CONFIG, PRODUCT = 0x20010488, 0x20030000, 0x2000e400, 0x2002f000
 PACKET, PAYLOAD, STOP = 0x20040000, 0x20041000, 0x9f000
@@ -45,7 +46,7 @@ class Device:
             u.mem_write(r[2], crypt(bytes(u.mem_read(r[1], r[3])), self.aes_key)); result = 1
         elif a == 0x39000:
             self.sent.append(bytes(u.mem_read(r[1], r[2])))
-        elif a in (0x39078, 0x3f154, 0x4df78, 0x4df8e, 0x4dfea, 0x4de84, 0x4deaa): pass
+        elif a in (0x3dd14, 0x5b61c, 0x3bce4, 0x39078, 0x3f154, 0x4df78, 0x4df8e, 0x4dfea, 0x4de84, 0x4deaa): pass
         elif a == 0x465f8: result = 1234
         else: return
         self.calls.append(hex(a)); u.reg_write(UC_ARM_REG_R0, result)
@@ -108,6 +109,21 @@ def run(image):
             actual = d.u.mem_read(0x2000078d, 1)[0]
             assert actual == expected, (name, actual)
             mode_results.append({'mode': name, 'firmware_value': actual})
+        # Exercise the native boost handler and complete configuration installer.
+        settings = Settings(control)
+        settings.boost({'kind':'manual', 'kwh':7})
+        d.receive(settings_packet(control,*settings.queue[0]),entry=0x4b78d)
+        assert d.u.mem_read(0x2000fc24+56,1)[0] == 7
+        settings = Settings(control)
+        settings.boost({'kind':'smart', 'kwh':12, 'time':'07:30'})
+        d.receive(settings_packet(control,*settings.queue[0]),entry=0x4b78d)
+        assert bytes(d.u.mem_read(0x2000fc24+49,3)) == bytes((7,30,12))
+        data = bytearray(128);data[:4]=bytes.fromhex('1057a5f8')
+        struct.pack_into('<HBBB',data,4,60,1,30,5)
+        for offset in range(0,128,24):
+            chunk=bytes(data[offset:offset+24])
+            d.receive(settings_packet(control,5,chunk,struct.pack('<HBB',offset,1,len(chunk))),entry=0x4b78d)
+        assert bytes(d.u.mem_read(0x2000fc24,128)) == bytes(data)
     return dict(result='pass', states=[1, 2, 5, 6], generated_device_hellos=len(d.sent),
                 scope=__doc__, modes=mode_results, physical_device_commands_sent=0)
 
