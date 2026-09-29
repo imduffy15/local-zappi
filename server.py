@@ -1,5 +1,5 @@
 """Local Zappi relay, session observation and explicit local mode control."""
-import asyncio, collections, hmac, http.server, json, os, pathlib, signal, socket, threading, time
+import asyncio, collections, http.server, json, os, pathlib, signal, socket, threading, time
 from control import Control
 from mqtt_events import Publisher
 
@@ -50,6 +50,21 @@ class Relay:
         self.mqtt.event('forwarding_changed', {'forward_upstream': value})
         return self.status()
 
+    def send_mode(self, mode):
+        if not self.forward:
+            raise RuntimeError('local control currently requires upstream forwarding')
+        return self.control.send_mode(mode)
+
+    def mqtt_command(self, mode):
+        # Paho callbacks run on its network thread; all control stays on the relay loop.
+        self.loop.call_soon_threadsafe(self.handle_mqtt_command, mode)
+
+    def handle_mqtt_command(self, mode):
+        try:
+            self.send_mode(mode)
+        except (ValueError, RuntimeError) as exc:
+            self.mqtt.event('local_command_rejected', {'mode': mode, 'error': str(exc)})
+
     def status(self):
         return dict(forward_upstream=self.forward, offline_control_supported=False,
                     uptime_seconds=int(time.time()-self.started), counters=dict(self.counts),
@@ -58,6 +73,7 @@ class Relay:
 
     async def start(self):
         self.loop = asyncio.get_running_loop()
+        self.mqtt.command = self.mqtt_command
         self.mqtt.start()
         self.mqtt_task = asyncio.create_task(self.publish_mqtt_state())
         for route in self.config['routes']:
@@ -173,7 +189,7 @@ class Upstream(asyncio.DatagramProtocol):
         r.counts['device_replies'] += 1
     def error_received(self, exc): self.relay.counts['upstream_errors'] += 1
 
-def make_handler(relay, token):
+def make_handler(relay):
     class Handler(http.server.BaseHTTPRequestHandler):
         def setup(self):
             super().setup(); self.connection.settimeout(5)
@@ -197,15 +213,11 @@ def make_handler(relay, token):
                 return
             if self.path == '/health': self.reply(200, {'ok':True}); return
             if self.path != '/status': self.reply(404, {'error':'not found'}); return
-            if self.client_address[0] not in ('127.0.0.1', '::1') and not hmac.compare_digest(self.headers.get('Authorization',''), 'Bearer '+token):
-                self.reply(401, {'error':'access key required'}); return
             async def status(): return relay.status()
             value = asyncio.run_coroutine_threadsafe(status(), relay.loop).result(5)
             self.reply(200, value)
         def do_POST(self):
             if self.path not in ('/config', '/mode'): self.reply(404, {'error':'not found'}); return
-            if not hmac.compare_digest(self.headers.get('Authorization',''), 'Bearer '+token):
-                self.reply(401, {'error':'unauthorized'}); return
             try:
                 n = int(self.headers.get('Content-Length','0'))
                 if not 0 < n <= 1024: raise ValueError('invalid body length')
@@ -214,9 +226,7 @@ def make_handler(relay, token):
                     if not isinstance(body, dict) or set(body) != {'mode'} or not isinstance(body['mode'], str):
                         raise ValueError('expected mode only')
                     async def command():
-                        if not relay.forward:
-                            raise RuntimeError('local control currently requires upstream forwarding')
-                        return relay.control.send_mode(body['mode'])
+                        return relay.send_mode(body['mode'])
                     value = asyncio.run_coroutine_threadsafe(command(), relay.loop).result(5)
                     self.reply(202, value)
                     return
@@ -233,9 +243,7 @@ async def main():
     config = json.loads(pathlib.Path(os.environ.get('LOCAL_ZAPPI_CONFIG','/data/config.json')).read_text())
     relay = Relay(config, os.environ.get('LOCAL_ZAPPI_DATA','/data'))
     await relay.start()
-    token = (relay.state_dir/'admin-token').read_text().strip()
-    if len(token)<32: raise ValueError('admin token too short')
-    httpd = http.server.ThreadingHTTPServer((config.get('admin_bind','127.0.0.1'),config.get('admin_port',18087)),make_handler(relay,token))
+    httpd = http.server.ThreadingHTTPServer((config.get('admin_bind','127.0.0.1'),config.get('admin_port',18087)),make_handler(relay))
     threading.Thread(target=httpd.serve_forever,daemon=True).start()
     stop = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):

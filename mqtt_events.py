@@ -1,4 +1,4 @@
-"""Outbound MQTT reporting. No subscriptions or remotely executable actions."""
+"""MQTT reporting, mode commands and Home Assistant discovery."""
 import collections
 import json
 import pathlib
@@ -14,6 +14,7 @@ class Publisher:
         self.prefix = self.config.get('topic_prefix', f'local-zappi/{serial or "bridge"}').strip('/')
         if not self.prefix or any(c in self.prefix for c in '+#\0'):
             raise ValueError('invalid MQTT topic prefix')
+        self.command = None
         self.client = None
         self.connected = False
         self.counts = collections.Counter()
@@ -38,6 +39,7 @@ class Publisher:
         if self.config.get('tls', False): client.tls_set()
         client.on_connect = self.on_connect
         client.on_disconnect = self.on_disconnect
+        client.on_message = self.on_message
         self.client = client
         client.connect_async(self.config['host'], self.config.get('port', 1883), keepalive=30)
         client.loop_start()
@@ -46,6 +48,7 @@ class Publisher:
         self.connected = not reason.is_failure
         if not self.connected: return
         self.counts['connections'] += 1
+        client.subscribe(self.prefix+'/mode/set', qos=1)
         client.publish(self.prefix+'/availability', 'online', qos=1, retain=True)
         if self.config.get('home_assistant_discovery', False):
             for name, field in [('App forwarding', 'forward_upstream'),
@@ -59,7 +62,38 @@ class Publisher:
                                'manufacturer': 'local-zappi', 'model': 'Zappi local bridge'}}
                 client.publish(f'homeassistant/binary_sensor/local_zappi_{self.serial}/{ident}/config',
                                json.dumps(config), qos=1, retain=True)
+            config = {
+                'name': 'Charging mode', 'unique_id': f'local_zappi_{self.serial}_charging_mode',
+                'default_entity_id': f'select.local_zappi_{self.serial}_charging_mode',
+                'command_topic': self.prefix+'/mode/set', 'state_topic': self.prefix+'/state',
+                'value_template': "{{ value_json.protocol.device_mode.mode if value_json.protocol.device_mode else 'None' }}",
+                'options': ['stop', 'fast', 'eco', 'eco_plus'], 'optimistic': False,
+                'retain': False, 'qos': 1,
+                'availability_mode': 'all',
+                'availability': [
+                    {'topic': self.prefix+'/availability'},
+                    {'topic': self.prefix+'/control/availability'}],
+                'device': {'identifiers': [f'local_zappi_{self.serial}'], 'name': 'Local Zappi',
+                           'manufacturer': 'local-zappi', 'model': 'Zappi local bridge'}}
+            client.publish(f'homeassistant/select/local_zappi_{self.serial}/charging_mode/config',
+                           json.dumps(config), qos=1, retain=True)
         self.event('bridge_connected', {'boot_id': self.boot_id})
+
+    def on_message(self, client, userdata, message):
+        if message.topic != self.prefix+'/mode/set': return
+        # Never replay a retained action when reconnecting.
+        if message.retain:
+            self.counts['retained_commands_ignored'] += 1
+            return
+        try:
+            mode = message.payload.decode('utf-8')
+            if mode not in ('stop', 'fast', 'eco', 'eco_plus'):
+                raise ValueError('expected stop, fast, eco or eco_plus')
+            if self.command is None: raise ValueError('command handler unavailable')
+            self.command(mode)
+            self.counts['commands_received'] += 1
+        except (UnicodeError, ValueError) as exc:
+            self.event('local_command_rejected', {'error': str(exc)})
 
     def on_disconnect(self, client, userdata, flags, reason, properties):
         self.connected = False
@@ -70,6 +104,13 @@ class Publisher:
             self.counts['dropped_disconnected'] += 1
             return False
         try:
+            if topic == 'state' and isinstance(value, dict):
+                protocol = value.get('protocol', {})
+                observed = protocol.get('device_mode') or {}
+                ready = (value.get('forward_upstream') and protocol.get('local_mode_control_ready')
+                         and time.time() - observed.get('received_at', 0) < 30)
+                self.client.publish(self.prefix+'/control/availability',
+                                    'online' if ready else 'offline', qos=1, retain=False)
             result = self.client.publish(self.prefix+'/'+topic,
                 json.dumps(value, separators=(',', ':')), qos=qos, retain=False)
             if result.rc != 0:

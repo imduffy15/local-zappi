@@ -8,12 +8,12 @@ Commands travel directly from this server to the charger. **The current server s
 
 | Capability | Current behavior |
 | --- | --- |
-| Local mode control | Fast, Eco, Eco+ and Stop; authenticated HTTP API and dashboard |
+| Local mode control | Fast, Eco, Eco+ and Stop; HTTP API and dashboard without login |
 | Device mode readback | Ethernet or decrypted UDP telemetry drives the displayed mode, including physical-device changes |
 | Command confirmation | A request stays pending until matching device telemetry arrives; timeout after 30 seconds |
 | Reconnect recovery | Automatically recovers keys from supported complete cloud handshakes, including captured exchanges found at startup |
 | Official app coexistence | Forwards device and cloud datagrams unchanged; existing cloud automations can still change the mode |
-| MQTT | Outbound telemetry, state, command outcomes and two read-only Home Assistant diagnostic sensors |
+| MQTT | Telemetry, state, mode commands, outcomes and Home Assistant discovery |
 | ECO+ allowance | Read-only observation of a complete cloud configuration; no active read or write |
 | Boost and schedules | Controls are disabled; decoding and write validation remain incomplete |
 | Independent offline operation | Not implemented in the live relay; a standalone session negotiator passes firmware-emulator tests |
@@ -35,7 +35,7 @@ python3 -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Create private configuration and a dashboard access key. This key authenticates your browser; it is separate from the device session key:
+Create private configuration:
 
 ```sh
 umask 077
@@ -43,8 +43,6 @@ zappi_data="$HOME/.local/share/local-zappi"
 mkdir -p "$zappi_data"
 chmod 700 "$zappi_data"
 cp config.example.json "$zappi_data/config.json"
-python -c 'import secrets; print(secrets.token_urlsafe(32))' \
-  > "$zappi_data/admin-token"
 ```
 
 Edit `config.json` for your bind address, permitted router IP, upstream routes and device MAC. Set `telemetry_interface` to the charger-facing interface, or leave it `null` to disable Ethernet capture. Configure a private MQTT broker if needed; see [MQTT reporting](docs/mqtt.md).
@@ -67,7 +65,7 @@ Redirect only the intended charger's UDP port 87 traffic to the corresponding lo
 
 Block or explicitly configure unknown upstream destinations if forwarding control must cover them. This switch controls the configured UDP relay path; it is not an all-protocol or IPv6 internet block. The redirected cloud path depends on the server being available.
 
-The HTTP listener defaults to `127.0.0.1:18087`. For remote access, configure `admin_bind` and a private HTTPS reverse proxy. Open the dashboard and enter the contents of `admin-token`. The browser stores it in session storage for that tab. Remote status requests and all writes require authentication; loopback status is readable locally.
+The HTTP listener defaults to `127.0.0.1:18087`. For remote access, configure `admin_bind` and a private HTTPS reverse proxy. The dashboard and HTTP API have no authentication. Anyone who can reach the service can view status and change modes or forwarding. The dashboard contains only reported mode, mode controls and request feedback; diagnostics remain available through `/status`.
 
 Keep `forward_upstream` enabled for local control. Disabling it closes upstream sessions, blocks cloud communication through the relay, and causes local mode requests to return HTTP 409. The saved forwarding setting survives restarts and overrides the initial configuration value. Route and listener configuration changes require a restart.
 
@@ -84,15 +82,15 @@ The API distinguishes a requested mode from a device report:
 | `POST /mode` | Body `{"mode":"fast"}`, `eco`, `eco_plus` or `stop`; returns 202 when sent |
 | `POST /config` | Body `{"forward_upstream":true}` or `false`; persists the forwarding setting |
 
-Send `Authorization: Bearer your_access_token_here` for authenticated requests. Invalid mode/configuration bodies return HTTP 400. Mode requests return HTTP 409 when forwarding is disabled or the session is not ready. HTTP 202 means `sent_unconfirmed`, not that charging started.
+Invalid mode/configuration bodies return HTTP 400. Mode requests return HTTP 409 when forwarding is disabled or the session is not ready. HTTP 202 means `sent_unconfirmed`, not that charging started.
 
 Read `protocol.device_mode` for the device's mode, source and receipt timestamp. The dashboard shows Unknown when the report is at least 30 seconds old. Read `protocol.last_local_command.status` for `sent_unconfirmed`, `confirmed` or `not_confirmed`. Confirmation means fresh telemetry matched the request within 30 seconds; another actor could also have caused the change. The server does not automatically retry mode requests.
 
-The host helper `ctl.py` supports `status`, `on`, `off`, and `mode fast|eco|eco_plus|stop`. It currently assumes the local API is on port 18087 and the access key is at `/data/local-zappi/admin-token`; use the API directly for other installations. Startup and deployment do not issue charging-mode commands.
+The host helper `ctl.py` supports `status`, `on`, `off`, and `mode fast|eco|eco_plus|stop`. It currently assumes the local API is on port 18087; use the API directly for other installations. Startup and deployment do not issue charging-mode commands.
 
 ## Diagnose connection or state problems
 
-Validation happens automatically. Check the dashboard session status, last verified reply and traffic counters; there is no validation button. A successful HTTP health check alone does not establish a device connection.
+Validation happens automatically. Check `/status` for session status, last verified reply and traffic counters; there is no validation button. A successful HTTP health check alone does not establish a device connection.
 
 Supported reconnect recovery needs a complete plaintext/stored-key/session-grant exchange and a later encrypted server hello. Missing or unsupported exchanges leave commands unavailable while forwarding continues. Recovery also scans the bounded private journals at startup. See [session recovery](docs/sessions.md) for its limits.
 
@@ -109,7 +107,7 @@ python -m unittest discover -s tests -v
 docker build -t local-zappi .
 ```
 
-The 34 tests at this review cover forwarding, authentication, recovery, command construction, device-mode confirmation and timeout, telemetry framing, and MQTT. The [firmware emulator](docs/sessions.md#reproduce-locally) separately executes session and mode handlers using a privately supplied firmware image. Neither software tests nor emulation send physical charger commands.
+The software tests cover forwarding, operation without an access token, recovery, command construction, device-mode confirmation and timeout, telemetry framing, and MQTT. The [firmware emulator](docs/sessions.md#reproduce-locally) separately executes session and mode handlers using a privately supplied firmware image. Neither software tests nor emulation send physical charger commands.
 
 GitHub Actions tests changes and publishes `latest` and full-commit `sha-...` tags on `main`. Version tags also publish images; pull requests build without publishing. Publishing an image does not update an existing digest-pinned deployment.
 
@@ -125,6 +123,6 @@ The current implementation and historical research are documented separately:
 - [Initial app experiment](docs/app-experiment.md), historical findings superseded by session decoding
 - [Labeled mode experiment](docs/mode-experiment.md), historical evidence followed by implemented control
 
-Keep access keys, device keys, firmware and personal captures outside this public repository. Journals rotate at approximately 10 MiB with one previous file; preserve private evidence before a longer experiment. Keep forwarding enabled and avoid rollouts during labeled captures. The offline analysis tools never transmit packets; the control API constructs fresh commands rather than replaying captures.
+Keep device keys, firmware and personal captures outside this public repository. Journals rotate at approximately 10 MiB with one previous file; preserve private evidence before a longer experiment. Keep forwarding enabled and avoid rollouts during labeled captures. The offline analysis tools never transmit packets; the control API constructs fresh commands rather than replaying captures.
 
 This is independent protocol research, not an official myenergi product. The examined firmware identity checks are not cryptographic authentication tags; keep the service restricted to the intended private network.

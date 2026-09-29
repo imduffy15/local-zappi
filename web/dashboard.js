@@ -1,97 +1,53 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const names = {fast:'Fast',eco:'Eco',eco_plus:'Eco+',stop:'Stop'};
-let token = sessionStorage.getItem('local-zappi-key') || '', snapshot = null, busy = false;
-const ago = value => value ? `${Math.max(0,Math.round(Date.now()/1000-value))}s ago` : 'Not yet observed';
-function message(text) { $('message').textContent=text; $('message').classList.toggle('hidden',!text); }
+const names = {fast:'Fast',eco:'Eco',eco_plus:'Eco+',stop:'Stopped'};
+let snapshot = null, busy = false, error = '';
+sessionStorage.removeItem('local-zappi-key');
 async function api(path, body) {
-  const headers={}; if(token) headers.Authorization=`Bearer ${token}`;
-  if(body!==undefined) headers['Content-Type']='application/json';
-  const response=await fetch(path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(6000)});
-  const result=await response.json();
-  if(!response.ok) { const e=new Error(result.error || `HTTP ${response.status}`);e.status=response.status;throw e; }
+  const response = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: body === undefined ? {} : {'Content-Type':'application/json'},
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(6000)
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Unable to connect');
   return result;
 }
-function pairs(element, data) {
-  element.replaceChildren();
-  for(const [key,value] of Object.entries(data || {})) {
-    const row=document.createElement('div');row.className='statrow';
-    const label=document.createElement('span');label.textContent=key.replaceAll('_',' ');
-    const number=document.createElement('strong');number.textContent=String(value);
-    row.append(label,number);element.append(row);
-  }
-}
 function render(s) {
-  snapshot=s; const p=s.protocol || {};
-  $('dashboard').classList.remove('hidden');$('locked').classList.add('hidden');
-  $('connection').textContent=p.local_mode_control_ready?'Charger connected':'Waiting for verified session';
-  $('connection').className=`badge ${p.local_mode_control_ready?'good':'warn'}`;
-  const observed=p.device_mode;
-  const fresh=observed && Date.now()/1000-observed.received_at<30;
-  $('mode').textContent=fresh?(names[observed.mode] || 'Unknown'):'Unknown';
-  $('mode-detail').textContent=observed?`${fresh?'Reported by charger':'Last report (stale)'}: ${names[observed.mode]} · ${ago(observed.received_at)}`:'Waiting for the charger to report its mode.';
-  const sessionMessages = {
-    no_key: 'No device session key is provisioned.',
-    awaiting_traffic: 'Waiting for fresh charger traffic. Session validation is automatic.',
-    recovering: 'Charger reconnecting. Recovering and verifying its new session automatically.',
-    key_mismatch: 'Saved key does not match current traffic. Automatic recovery needs a complete reconnect handshake.',
-    recovery_save_failed: 'Could not save the recovered session key. Check server storage.',
-    verified: 'Session key verified. Waiting for fresh charger traffic and a control target.'
-  };
-  $('control-state').textContent=!s.forward_upstream?'Enable app forwarding to establish a session.':p.local_mode_control_ready?'Local mode controls are available.':sessionMessages[p.session_state] || 'Session validation is automatic; waiting for charger traffic.';
-  document.querySelectorAll('[data-mode]').forEach(button=>button.disabled=busy || !s.forward_upstream || !p.local_mode_control_ready);
-  const last=p.last_local_command;
-  $('command-result').textContent=!last?'':last.status==='confirmed'?`${names[last.mode]} confirmed by charger ${ago(last.confirmed_at)}.`:last.status==='not_confirmed'?`${names[last.mode]} request was not confirmed within 30 seconds.`:`${names[last.mode]} requested ${ago(last.sent_at)}. Waiting for charger confirmation.`;
-  $('forwarding').textContent=s.forward_upstream?'On':'Off';
-  const sessionLabels = {no_key:'No key loaded',awaiting_traffic:'Waiting for traffic',recovering:'Recovering new session',key_mismatch:'Session key mismatch',recovery_save_failed:'Key could not be saved',verified:'Key verified'};
-  $('session').textContent=p.local_mode_control_ready?'Verified':sessionLabels[p.session_state] || 'Waiting for traffic';
-  $('verified').textContent=ago(p.last_valid_upstream_at);
-  $('uptime').textContent=`${Math.floor(s.uptime_seconds/3600)}h ${Math.floor(s.uptime_seconds/60)%60}m`;
-  $('forward-toggle').textContent=s.forward_upstream?'Disable app forwarding':'Enable app forwarding';
-  $('forward-toggle').disabled=busy;
-  const green=p.observed_cloud_config?.minimum_green_percent;
-  $('green').textContent=green===undefined?'Not yet observed':`${green}% green / ${100-green}% grid`;
-  pairs($('traffic'),s.counters);pairs($('crypto'),p.counters);
-  $('mqtt-state').textContent=s.mqtt?.enabled?`MQTT ${s.mqtt.connected?'connected':'reconnecting'} · ${s.mqtt.topic_prefix}/#`:'MQTT reporting is disabled.';
-  pairs($('mqtt-counts'),s.mqtt?.counters);
-  $('cts').replaceChildren();
-  for(const r of Object.values(s.last_telemetry || {})) for(const ct of r.ct_records || []) {
-    const tr=document.createElement('tr');
-    for(const value of [r.harvi_serial,ct.channel,ct.value_a_s16,ct.value_b_s16,`${ct.type_code} / ${ct.status_byte}`,ago(r.received_at)]) {
-      const td=document.createElement('td');td.textContent=String(value);tr.append(td);
-    }
-    $('cts').append(tr);
-  }
-  if(!$('cts').children.length) {const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.textContent='Waiting for Harvi telemetry';tr.append(td);$('cts').append(tr);}
-  const expanded=new Set([...$('records').querySelectorAll('details[open]')].map(x=>x.dataset.key));
-  $('records').replaceChildren();
-  for(const [source,records] of [['Ethernet',s.last_telemetry],['UDP',p.udp_records]]) for(const [id,record] of Object.entries(records || {})) {
-    const card=document.createElement('section');card.className='card';
-    const heading=document.createElement('h3');heading.textContent=`${source} · ${record.type}`;
-    const sub=document.createElement('small');sub.textContent=`${record.length} bytes · ${ago(record.received_at)}`;
-    const detail=document.createElement('details');detail.dataset.key=source+id;detail.open=expanded.has(detail.dataset.key);
-    const summary=document.createElement('summary');summary.textContent='View fields and raw record';
-    const pre=document.createElement('pre');pre.textContent=JSON.stringify(record,null,2);
-    detail.append(summary,pre);card.append(heading,sub,detail);$('records').append(card);
-  }
+  snapshot = s;
+  const p = s.protocol || {}, observed = p.device_mode;
+  const fresh = observed && Date.now()/1000-observed.received_at < 30;
+  const ready = s.forward_upstream && p.local_mode_control_ready;
+  const request = p.last_local_command;
+  const pending = request?.status === 'sent_unconfirmed';
+  $('connection').textContent = ready ? 'Connected' : 'Reconnecting…';
+  $('mode').textContent = fresh ? names[observed.mode] || 'Unknown' : 'Unavailable';
+  document.querySelectorAll('[data-mode]').forEach(button => {
+    button.disabled = busy || pending || !ready;
+    button.setAttribute('aria-pressed', String(Boolean(fresh && observed.mode === button.dataset.mode)));
+  });
+  $('message').textContent = error || (busy ? 'Sending…' : pending ? `Changing to ${names[request.mode]}…` :
+    request?.status === 'not_confirmed' ? 'The charger did not confirm that change. Please try again.' :
+    !ready ? 'Waiting for the charger to connect.' : '');
 }
 async function refresh() {
   try { render(await api('/status')); }
-  catch(e) {
-    document.querySelectorAll('[data-mode]').forEach(button=>button.disabled=true);
-    $('forward-toggle').disabled=true;
-    $('connection').textContent=e.status===401?'Access key required':'Connection lost';
-    $('connection').className='badge warn';
-    if(e.status===401){$('locked').classList.remove('hidden');$('dashboard').classList.add('hidden');}
+  catch (e) {
+    $('connection').textContent = 'Disconnected';
+    $('mode').textContent = 'Unavailable';
+    $('message').textContent = 'Unable to reach your charger. Retrying…';
+    document.querySelectorAll('[data-mode]').forEach(button => {
+      button.disabled = true;
+      button.setAttribute('aria-pressed', 'false');
+    });
   }
 }
-$('login').addEventListener('submit',async e=>{e.preventDefault();token=$('token').value.trim();try{render(await api('/status'));sessionStorage.setItem('local-zappi-key',token);$('token').value='';message('');}catch(e){message(e.message);}});
-document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',async()=>{
-  if(busy)return;busy=true;render(snapshot);
-  try{const result=await api('/mode',{mode:button.dataset.mode});message(`${names[result.mode]} requested. Waiting for the charger to report its mode.`);}
-  catch(e){message(`Command not sent: ${e.message}`);}finally{busy=false;await refresh();}
+document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', async () => {
+  if (busy || !snapshot) return;
+  busy = true; error = ''; render(snapshot);
+  try { await api('/mode', {mode:button.dataset.mode}); }
+  catch (e) { error = `Unable to change mode: ${e.message}`; }
+  finally { busy = false; await refresh(); }
 }));
-$('forward-toggle').addEventListener('click',async()=>{if(busy || !snapshot)return;busy=true;render(snapshot);try{await api('/config',{forward_upstream:!snapshot.forward_upstream});message('App forwarding updated.');}catch(e){message(e.message);}finally{busy=false;await refresh();}});
-$('logout').addEventListener('click',()=>{token='';sessionStorage.removeItem('local-zappi-key');snapshot=null;$('dashboard').classList.add('hidden');$('locked').classList.remove('hidden');});
-$('download').addEventListener('click',()=>{if(!snapshot)return;const url=URL.createObjectURL(new Blob([JSON.stringify(snapshot,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='local-zappi-snapshot.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
-refresh();setInterval(refresh,3000);
+refresh(); setInterval(refresh, 3000);

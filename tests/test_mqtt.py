@@ -7,6 +7,7 @@ from mqtt_events import Publisher
 
 class Client:
     def __init__(self): self.messages = []
+    def subscribe(self, topic, qos): self.subscription = (topic, qos)
     def publish(self, topic, payload, **options):
         self.messages.append((topic, payload, options))
         return types.SimpleNamespace(rc=0)
@@ -37,8 +38,12 @@ class MQTTTest(unittest.TestCase):
         self.assertEqual((topic, payload), ('local-zappi/1234/availability', 'online'))
         self.assertTrue(opts['retain'])
         discovery = [json.loads(payload) for topic, payload, opts in self.p.client.messages if topic.startswith('homeassistant/')]
-        self.assertEqual(len(discovery), 2)
-        self.assertTrue(all('command_topic' not in row and row['expire_after']==30 for row in discovery))
+        self.assertEqual(len(discovery), 3)
+        self.assertEqual(self.p.client.subscription, ('local-zappi/1234/mode/set', 1))
+        control = discovery[-1]
+        self.assertFalse(control['optimistic'])
+        self.assertFalse(control['retain'])
+        self.assertEqual(control['command_topic'], 'local-zappi/1234/mode/set')
         self.p.on_disconnect(None, None, None, None, None)
         self.assertFalse(self.p.connected)
 
@@ -54,3 +59,30 @@ class MQTTTest(unittest.TestCase):
         self.p.connected = True
         self.assertFalse(self.p.publish('state', object()))
         self.assertEqual(self.p.counts['publish_errors'], 1)
+
+    def test_commands_reject_retained_and_invalid_payloads(self):
+        received = []
+        self.p.command = received.append
+        self.p.connected = True
+        def message(payload, retain=False):
+            self.p.on_message(None, None, types.SimpleNamespace(
+                topic=self.p.prefix+'/mode/set', payload=payload, retain=retain))
+        message(b'fast', True)
+        message(b'garbage')
+        message(b'\xff')
+        self.assertEqual(received, [])
+        message(b'fast')
+        self.assertEqual(received, ['fast'])
+        self.assertEqual(self.p.counts['retained_commands_ignored'], 1)
+
+    def test_control_unavailable_without_forwarding_or_fresh_state(self):
+        import time
+        self.p.connected = True
+        state = {'forward_upstream': True, 'protocol': {'local_mode_control_ready': True,
+                 'device_mode': {'mode': 'stop', 'received_at': time.time()}}}
+        for forward, timestamp, expected in [(True, time.time(), 'online'),
+                (False, time.time(), 'offline'), (True, 0, 'offline')]:
+            state['forward_upstream'] = forward
+            state['protocol']['device_mode']['received_at'] = timestamp
+            self.p.publish('state', state)
+            self.assertEqual(self.p.client.messages[-2][1], expected)
