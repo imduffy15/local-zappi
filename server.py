@@ -44,6 +44,7 @@ class Relay:
         os.replace(temp, self.flag_path)
         self.forward = value
         if not value:
+            self.control.cancel_pending()
             for s in self.sessions.values():
                 if s.transport: s.transport.close()
             self.sessions.clear()

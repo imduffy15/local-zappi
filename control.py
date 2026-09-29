@@ -211,6 +211,7 @@ class Control:
                     'flags': raw[5], 'length': size, 'raw': raw.hex(), 'received_at': self.peer_at}
                 self.telemetry('udp', self.records[record_id])
             offset += size
+        self.dispatch_pending()
 
     def observe_device_record(self, raw, source):
         # Firmware 5.794 builder 0x3c5b0: 3510 byte 23 low two bits,
@@ -235,7 +236,8 @@ class Control:
 
     def expire_command(self, now):
         command = self.last_local_command
-        if command and command['status'] == 'sent_unconfirmed' and now-command['sent_at'] > 30:
+        if (command and command['status'] in ('queued', 'sent_unconfirmed')
+                and now-command.get('sent_at', command.get('requested_at', now)) > 30):
             command.update(status='not_confirmed', completed_at=now)
             self.emit('local_command_not_confirmed', dict(command))
 
@@ -322,12 +324,34 @@ class Control:
         return bytes(packet)
 
     def send_mode(self, mode):
-        packet = self.mode_packet(mode)
+        if mode not in MODES: raise ValueError('mode must be fast, eco, eco_plus or stop')
+        if not self.ready(): raise RuntimeError('no recently verified live session; command not queued')
+        self.expire_command(time.time())
+        if self.last_local_command and self.last_local_command['status'] in ('queued', 'sent_unconfirmed'):
+            raise RuntimeError('a mode request is already pending')
+        self.last_local_command = {'mode': mode, 'requested_at': time.time(), 'status': 'queued'}
+        self.emit('local_command_queued', dict(self.last_local_command))
+        return self.last_local_command
+
+    def cancel_pending(self):
+        if self.last_local_command and self.last_local_command['status'] == 'queued':
+            self.last_local_command.update(status='not_confirmed', completed_at=time.time())
+            self.emit('local_command_not_confirmed', dict(self.last_local_command))
+
+    def dispatch_pending(self):
+        self.expire_command(time.time())
+        command = self.last_local_command
+        if not command or command['status'] != 'queued' or not self.ready(): return
+        try:
+            packet = self.mode_packet(command['mode'])
+        except (RuntimeError, ValueError) as exc:
+            self.cancel_pending()
+            self.emit('local_command_rejected', {'mode': command['mode'], 'error': str(exc)})
+            return
         downstream, addr = self.peer
         downstream.transport.sendto(packet, addr)
         downstream.relay.record('local-command', packet, route=downstream.route['name'], peer=addr)
-        self.last_local_command = {'mode': mode, 'sequence': self.sequence,
-                                   'sent_at': time.time(), 'status': 'sent_unconfirmed'}
+        command.update(sequence=self.sequence, sent_at=time.time(), status='sent_unconfirmed')
         self.counts['local_commands_sent'] += 1
         self.emit('local_command_sent', dict(self.last_local_command))
         return self.last_local_command

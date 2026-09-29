@@ -99,3 +99,34 @@ class ControlTests(unittest.TestCase):
         with patch.object(self.c, 'save_counter', side_effect=OSError('disk full')):
             with self.assertRaisesRegex(RuntimeError, 'command not sent'):
                 self.c.mode_packet('fast')
+
+    def test_queued_command_waits_for_device_poll_and_can_be_cancelled(self):
+        import types
+        sent=[]
+        downstream=types.SimpleNamespace(route={'name':'test'},
+            transport=types.SimpleNamespace(sendto=lambda *args:sent.append(args)),
+            relay=types.SimpleNamespace(record=lambda *args,**kwargs:None))
+        self.c.peer=(downstream,('127.0.0.1',1234))
+        self.c.peer_at=self.c.verified_at=time.time();self.c.target=(0x81,0x50)
+        request=self.c.send_mode('fast')
+        self.assertEqual(request['status'],'queued')
+        self.assertEqual(sent,[])
+        with self.assertRaises(RuntimeError):self.c.send_mode('eco')
+        self.c.cancel_pending();self.c.dispatch_pending()
+        self.assertEqual(sent,[])
+        request=self.c.send_mode('fast')
+        plain=bytearray(64)
+        struct.pack_into('<III',plain,0,0xfacecacf,0,12345678)
+        plain[31]=0xe3
+        struct.pack_into('<BBHBBI',plain,32,9,0x81,0x7979,0x50,1,12345678)
+        plain[16:]=crypt(bytes(plain[16:]),self.key)
+        self.c.device(bytes(plain),downstream,('127.0.0.1',1234))
+        self.assertEqual(len(sent),1)
+        self.assertEqual(request['status'],'sent_unconfirmed')
+        self.c.device(bytes(plain),downstream,('127.0.0.1',1234))
+        self.assertEqual(len(sent),1)
+
+    def test_queued_command_expires_without_transmitting(self):
+        self.c.last_local_command={'mode':'fast','status':'queued','requested_at':100}
+        self.c.expire_command(131)
+        self.assertEqual(self.c.last_local_command['status'],'not_confirmed')
