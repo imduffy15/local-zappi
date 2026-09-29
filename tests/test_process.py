@@ -19,6 +19,15 @@ class ProcessTest(unittest.TestCase):
                         with urllib.request.urlopen(url+'/health',timeout=.2):break
                     except OSError:time.sleep(.05)
                 else:self.fail('server did not start')
+                with urllib.request.urlopen(url+'/') as r:
+                    self.assertIn(b'Local Zappi',r.read())
+                    self.assertIn("frame-ancestors 'none'",r.headers['Content-Security-Policy'])
+                req=urllib.request.Request(url+'/mode',data=b'{"mode":"fast"}',headers={'Content-Type':'application/json'})
+                with self.assertRaises(urllib.error.HTTPError) as e:urllib.request.urlopen(req)
+                self.assertEqual(e.exception.code,401);e.exception.close()
+                req.add_header('Authorization','Bearer '+'x'*40)
+                with self.assertRaises(urllib.error.HTTPError) as e:urllib.request.urlopen(req)
+                self.assertEqual(e.exception.code,409);e.exception.close()
                 def post(value,auth=None):
                     headers={'Content-Type':'application/json'}
                     if auth:headers['Authorization']='Bearer '+auth

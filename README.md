@@ -2,7 +2,7 @@
 
 Experimental local server for observing and relaying a myenergi Zappi's proprietary UDP traffic, with a persistent boolean `forward_upstream` option and passive Ethernet telemetry decoding.
 
-**This is not yet an offline replacement for myenergi's control server.** It preserves opaque cloud packets; encryption/session handling and local charging commands are not implemented. Setting forwarding to false blocks relayed cloud communication. It does not enable local FAST/ECO/STOP controls, and the vendor app will lose fresh charger updates/control.
+**This is not yet a complete offline replacement for myenergi's control server.** The live service decrypts a privately provisioned session and provides explicit local FAST/ECO/ECO+/STOP commands while retaining cloud forwarding. Fresh-session negotiation is implemented and firmware-emulator tested, but is not yet connected to the relay. Disabling forwarding currently blocks cloud communication and local mode controls.
 
 ## Features
 
@@ -11,13 +11,15 @@ Experimental local server for observing and relaying a myenergi Zappi's propriet
 - Persistent forwarding switch closes existing upstream sessions when disabled.
 - Optional receive-only EtherType `0x88b5` telemetry parsing: device announcements and candidate Harvi CT records. Numeric units remain unverified.
 - Loopback HTTP API, bounded local raw traffic journal, session expiry and source allowlist.
-- No cloud credentials, packet injection, charging commands, or factory commands.
+- Web dashboard with explicit mode controls, session status, raw CT readings and every observed Ethernet/decrypted UDP record.
+- Local mode packets tested through the firmware receiver in offline emulation; live commands are reported as sent, not confirmed.
+- No factory commands, generic EEPROM writes, or automatic charging-mode changes.
 
 ## Run
 
 Copy `config.example.json` to a private data directory as `config.json`, adjust the bind address, permitted router IP and route mappings, and create `admin-token` containing at least 32 random characters. The same directory stores `forwarding.json` and bounded `traffic.jsonl`/`traffic.jsonl.1`; preserve it across restarts. Protect it from other users. Raw traffic and telemetry may contain private identifiers.
 
-Run `python server.py` with `LOCAL_ZAPPI_DATA` and `LOCAL_ZAPPI_CONFIG`, or mount the directory at `/data` in `ghcr.io/imduffy15/local-zappi:latest`. Passive Ethernet reception requires host networking, the correct interface, and Linux `NET_RAW`; disable it with `telemetry_interface: null` when unavailable. The HTTP API binds only to 127.0.0.1:18087. Do not expose it through an unauthenticated reverse proxy; status includes private telemetry.
+Run `python server.py` with `LOCAL_ZAPPI_DATA` and `LOCAL_ZAPPI_CONFIG`, or mount the directory at `/data` in `ghcr.io/imduffy15/local-zappi:latest`. Passive Ethernet reception requires host networking, the correct interface, and Linux `NET_RAW`; disable it with `telemetry_interface: null` when unavailable. The HTTP API defaults to 127.0.0.1:18087. Set `admin_bind` to expose it through a private HTTPS ingress. Remote status access and all writes require the access key; loopback status is readable locally. Do not expose it through an unauthenticated reverse proxy; status includes private telemetry.
 
 A router must redirect only the target charger's UDP87 traffic to each corresponding listener. Preserve the original destination with distinct listener ports. Source NAT to the permitted router address keeps replies on the reverse NAT path when the server is multihomed. Unknown UDP87 destinations must not bypass the switch: block them and add validated route mappings as needed. This does not block unrelated transports or IPv6; it is not a whole-device internet kill switch. Site-specific router/Kubernetes definitions belong in the operator's private infrastructure configuration.
 
@@ -25,15 +27,18 @@ The initial forwarding setting defaults to true. Persisted `forwarding.json` ove
 
 ## API
 
+- `GET /`: dashboard; enter the server access key to unlock remote data and controls.
 - `GET /health`: process HTTP liveness.
 - `GET /status`: forwarding state, counters, routes and latest telemetry; no credentials.
+- `POST /mode`: `{"mode":"stop"}`, `fast`, `eco`, or `eco_plus`; bearer authentication required. Returns 202 with `sent_unconfirmed`, or 409 if no recently verified session exists.
 - `POST /config`: `{"forward_upstream": false}` or `true`, with `Authorization: Bearer <admin-token>`.
 
-On the server host, `python ctl.py status` prints status. `sudo python ctl.py off` / `on` reads the token from `/data/local-zappi/admin-token` without putting it in shell arguments. `off` intentionally interrupts cloud/app connectivity and any cloud-based charging automations; existing device behavior is not a substitute for implemented local controls. No automated live off/on test is required; loopback tests cover the switch.
+On the server host, `python ctl.py status` prints status. `sudo python ctl.py off` / `on` reads the token from `/data/local-zappi/admin-token` without putting it in shell arguments. `off` intentionally interrupts cloud/app connectivity and any cloud-based charging automations; existing device behavior is not a substitute for implemented local controls. Use `sudo python ctl.py mode stop` (or another mode) for an explicit local command. The dashboard stores its access key only for the browser tab. Retrieve the key on the server with `sudo cat /data/local-zappi/admin-token`. Never place it in a public repository.
 
 ## Build and verification
 
 ```sh
+python3 -m pip install -r requirements.txt
 python3 -m unittest discover -s tests -v
 docker build -t local-zappi .
 ```
@@ -44,10 +49,14 @@ Tests cover byte-exact bidirectional forwarding, session reuse, source filtering
 
 ## Next protocol work
 
-Identify session/key negotiation and validate message framing against owned-device evidence; implement authentication/decryption and a simulated server before generating charging commands. Keep raw vendor firmware and personal packet captures outside this public repository. This project is independent research, not an official myenergi product.
+See [session findings](docs/sessions.md). Remaining work: connect fresh-session negotiation, implement independent application replies and session coordination with the vendor, decode actual mode readback, and validate boost/schedule/configuration controls. The dashboard intentionally disables unsupported write controls. Raw telemetry fields are available, but unverified CT values are not labelled with physical units. Keep raw vendor firmware and personal packet captures outside this public repository. This project is independent research, not an official myenergi product.
 
 ## Labeled app experiments
 
 Keep upstream forwarding enabled and avoid server rollouts while recording. Preserve the journal in a private experiment directory before its bounded rotation discards older data. Record UTC timestamps and human labels for each app action; separate actions by about ten seconds to distinguish them from periodic telemetry. A record of an app tap alone is not proof the charger accepted it.
 
-`python tools/analyze_journal.py PRIVATE_JOURNAL.jsonl` emits an offline UDP timeline, observed request/reply correlation bytes, response delays and byte-change ranges against the previous packet of the same direction/route/length. Those ranges include checksums, counters and possibly ciphertext; they are not decoded commands. Keep generated timelines and app labels private alongside the raw capture. Replay/injection and charging controls remain unimplemented.
+`python tools/analyze_journal.py PRIVATE_JOURNAL.jsonl` emits an offline UDP timeline, observed request/reply correlation bytes, response delays and byte-change ranges against the previous packet of the same direction/route/length. Those ranges include checksums, counters and possibly ciphertext; they are not decoded commands. Keep generated timelines and app labels private alongside the raw capture. Do not replay captured packets. Local mode commands are freshly constructed from validated fields.
+
+## Private session provisioning
+
+The live service loads `/data/session-keys.json` if present, requiring mode 0600. Supply `serial` and `session_key_hex` privately. The recovery tool can produce these from an owned capture. Keys are never returned by the API. If the upstream session changes, controls fail closed until a matching key is available; forwarding continues unchanged. Do not assume session recovery from one capture is permanent provisioning.

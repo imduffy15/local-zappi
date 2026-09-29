@@ -1,7 +1,6 @@
-"""Local Zappi: byte-preserving UDP relay and passive Ethernet telemetry.
-No charging commands are generated; offline charging control is not implemented.
-"""
+"""Local Zappi relay, session observation and explicit local mode control."""
 import asyncio, collections, hmac, http.server, json, os, pathlib, signal, socket, threading, time
+from control import Control
 
 class Relay:
     def __init__(self, config, state_dir):
@@ -21,6 +20,7 @@ class Relay:
         self.transports = []
         self.telemetry_socket = None
         self.capture = self.state_dir / 'traffic.jsonl'
+        self.control = Control(self.state_dir)
 
     def record(self, direction, data, **fields):
         # Bounded journal: at most roughly 2 x 10 MiB.
@@ -49,7 +49,7 @@ class Relay:
         return dict(forward_upstream=self.forward, offline_control_supported=False,
                     uptime_seconds=int(time.time()-self.started), counters=dict(self.counts),
                     sessions=len(self.sessions), last_telemetry=self.latest,
-                    routes=self.config['routes'])
+                    routes=self.config['routes'], protocol=self.control.status())
 
     async def start(self):
         self.loop = asyncio.get_running_loop()
@@ -106,6 +106,7 @@ class Downstream(asyncio.DatagramProtocol):
             r.counts['rejected_clients'] += 1; return
         r.counts['device_packets'] += 1
         r.record('device', data, route=self.route['name'], peer=addr)
+        r.control.device(data, self, addr)
         if not r.forward:
             r.counts['blocked_device_packets'] += 1; return
         key = (self.route['name'], addr)
@@ -150,6 +151,7 @@ class Upstream(asyncio.DatagramProtocol):
         self.last_seen = time.monotonic()
         r.counts['upstream_received'] += 1
         r.record('upstream', data, route=self.downstream.route['name'], peer=addr)
+        r.control.upstream(data)
         self.downstream.transport.sendto(data, self.peer)
         r.counts['device_replies'] += 1
     def error_received(self, exc): self.relay.counts['upstream_errors'] += 1
@@ -162,27 +164,52 @@ def make_handler(relay, token):
         def reply(self, code, value):
             b = json.dumps(value).encode(); self.send_response(code)
             self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(b)))
+            self.send_header('Cache-Control', 'no-store')
             self.end_headers(); self.wfile.write(b)
         def do_GET(self):
+            if self.path in ('/', '/dashboard.js'):
+                name = 'index.html' if self.path == '/' else 'dashboard.js'
+                b = (pathlib.Path(__file__).parent/'web'/name).read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8' if name.endswith('.html') else 'text/javascript; charset=utf-8')
+                self.send_header('Content-Length', str(len(b)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+                self.end_headers(); self.wfile.write(b)
+                return
             if self.path == '/health': self.reply(200, {'ok':True}); return
             if self.path != '/status': self.reply(404, {'error':'not found'}); return
+            if self.client_address[0] not in ('127.0.0.1', '::1') and not hmac.compare_digest(self.headers.get('Authorization',''), 'Bearer '+token):
+                self.reply(401, {'error':'access key required'}); return
             async def status(): return relay.status()
             value = asyncio.run_coroutine_threadsafe(status(), relay.loop).result(5)
             self.reply(200, value)
         def do_POST(self):
-            if self.path != '/config': self.reply(404, {'error':'not found'}); return
+            if self.path not in ('/config', '/mode'): self.reply(404, {'error':'not found'}); return
             if not hmac.compare_digest(self.headers.get('Authorization',''), 'Bearer '+token):
                 self.reply(401, {'error':'unauthorized'}); return
             try:
                 n = int(self.headers.get('Content-Length','0'))
                 if not 0 < n <= 1024: raise ValueError('invalid body length')
                 body = json.loads(self.rfile.read(n))
+                if self.path == '/mode':
+                    if not isinstance(body, dict) or set(body) != {'mode'} or not isinstance(body['mode'], str):
+                        raise ValueError('expected mode only')
+                    async def command():
+                        if not relay.forward:
+                            raise RuntimeError('local control currently requires upstream forwarding')
+                        return relay.control.send_mode(body['mode'])
+                    value = asyncio.run_coroutine_threadsafe(command(), relay.loop).result(5)
+                    self.reply(202, value)
+                    return
                 if not isinstance(body,dict) or set(body) != {'forward_upstream'}: raise ValueError('expected forward_upstream only')
                 if type(body['forward_upstream']) is not bool: raise ValueError('boolean required')
                 async def update(): return relay.set_forwarding(body['forward_upstream'])
                 value = asyncio.run_coroutine_threadsafe(update(), relay.loop).result(5)
                 self.reply(200,value)
-            except (ValueError, KeyError): self.reply(400, {'error':'expected a JSON boolean forward_upstream'})
+            except (ValueError, KeyError) as exc: self.reply(400, {'error':str(exc)})
+            except RuntimeError as exc: self.reply(409, {'error':str(exc)})
     return Handler
 
 async def main():
@@ -191,7 +218,7 @@ async def main():
     await relay.start()
     token = (relay.state_dir/'admin-token').read_text().strip()
     if len(token)<32: raise ValueError('admin token too short')
-    httpd = http.server.ThreadingHTTPServer(('127.0.0.1',config.get('admin_port',18087)),make_handler(relay,token))
+    httpd = http.server.ThreadingHTTPServer((config.get('admin_bind','127.0.0.1'),config.get('admin_port',18087)),make_handler(relay,token))
     threading.Thread(target=httpd.serve_forever,daemon=True).start()
     stop = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
