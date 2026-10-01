@@ -28,7 +28,7 @@ Product 3562 maps to bootstrap prefix `0x85` (`0x41e8c`). For the firmware-backe
 
 The server time field in hello replies is Unix time in minutes. Session records use slot zero; stored time-limited keys occupy other slots. Our fresh-session exchange does not write replacement day keys to EEPROM.
 
-`SessionNegotiator` implements this exchange without network I/O. Its caller must persist a newly generated key before sending the grant. Live routing, upstream/local session coordination, retry policy and application replies remain integration work; the deployed relay still forwards vendor bytes unchanged.
+`SessionNegotiator` implements this exchange without network I/O. Its caller must persist a newly generated key before sending the grant. `offline.py` connects it to runtime routing when forwarding is disabled and bootstrap provisioning is present. Forwarded mode still shares the vendor session; the server does not translate between two independent concurrent sessions.
 
 ## How automatic reconnect recovery works
 
@@ -38,7 +38,7 @@ After validation, `Control` saves the key atomically with mode 0600, clears cont
 
 At startup, the server scans `traffic.jsonl.1` and `traffic.jsonl` for a recoverable exchange. Before replacing the saved key, it checks the candidate against the latest relevant application reply when one exists. It also restores the last matching command counter, without restoring session readiness. This recovered the owner’s reboot exchange during live verification.
 
-Initial provisioning is still required: without a private `session-keys.json` containing the device serial and a session key, the observer has no configured device identity. Creating that file while the process is running requires a server restart. Recovery is limited to the supported complete exchange, not every possible reconnect or key class.
+Initial provisioning is still required. The capture-based setup supplies device identity and the current key through private `session-keys.json`. A separately provisioned `bootstrap.json` can instead supply identity and enable local session establishment. Creating that file while the process is running requires a server restart. Recovery is limited to the supported complete exchange, not every possible reconnect or key class.
 
 ## Original recovery evidence
 
@@ -55,6 +55,8 @@ Install `requirements.txt`. For the firmware emulator also install `unicorn`. Ru
 The emulator runs the firmware's actual handshake builder, receiver, key selection and key installer. AES hardware, memory-copy, logging, network-send and EEPROM calls are substituted. Its packets never reach a physical device. It proves the control flow and formats for the initialized emulator state, not every live reconnection or concurrent-app scenario.
 
 ## Recover a key from a private capture
+
+For a first installation, follow [Get your charger’s session key](get-session-key.md). It includes packet capture and conversion commands, file placement and failure diagnosis.
 
 The offline tool accepts a JSON list of captured UDP payloads, with a `hex` field in capture order. It requires a suitable complete exchange and later handshake confirmation. It creates the output with mode 0600, refuses to overwrite an existing file and never prints the recovered key.
 

@@ -50,7 +50,9 @@ cp config.example.json "$zappi_data/config.json"
 
 Edit `config.json` for your bind address, permitted router IP, upstream routes and device MAC. Set `telemetry_interface` to the charger-facing interface, or leave it `null` to disable Ethernet capture. Configure a private MQTT broker if needed; see [MQTT reporting](docs/mqtt.md).
 
-Provision `session-keys.json` with your device's `serial` and `session_key_hex`, mode 0600. The [session recovery tool](docs/sessions.md#recover-a-key-from-a-private-capture) can create it from a suitable owned capture. For independent sessions, also provision private `bootstrap.json` (0600) with `serial`, `product`, `version` and `bootstrap_key_hex` for the exact supported firmware; see [session provisioning](docs/architecture.md). Keys and firmware are never distributed with this project.
+**First installation:** follow [Get your charger's session key](docs/get-session-key.md) before redirecting charger traffic. The guide covers capture location, reconnect capture, conversion, recovery, private file placement and verification. It creates `session-keys.json` with your device's `serial` and `session_key_hex`, mode 0600. Recovery requires a supported complete handshake; it is not guaranteed after every reboot.
+
+For independent sessions, also provision private `bootstrap.json` (0600) with `serial`, `product`, `version` and `bootstrap_key_hex` for the exact supported firmware; see [session provisioning](docs/architecture.md). Keys and firmware are never distributed with this project.
 
 Start the server using the private directory:
 
