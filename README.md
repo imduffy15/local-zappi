@@ -1,8 +1,28 @@
 # local-zappi
 
-Control a myenergi Zappi over your local network, read its reported charging mode, and keep the official app connected through a UDP relay. The dashboard supports Fast, Eco, Eco+ and Stop requests, confirms them from device telemetry, and publishes observations to MQTT.
+Control a myenergi Zappi over your local network without cloud forwarding. Optionally, keep the official app connected through the cloud-forwarded setup path. The dashboard supports Fast, Eco, Eco+ and Stop requests, confirms them from device telemetry, and publishes observations to MQTT.
 
 Commands travel directly from this server to the charger. With private bootstrap provisioning, the server handles the charger session locally when cloud forwarding is disabled. The dashboard shows live grid and charger power, charging mode, manual/smart boost controls and four editable scheduled timers. Home Assistant can record the MQTT readings; this service does not maintain consumption or charge history.
+
+## Choose your setup path
+
+**Start with Path A: local-only** if you want local control and Home Assistant without myenergi cloud forwarding. Choose Path B only if you want to retain the official app and cloud services. These are alternative provisioning paths, not two steps that everyone must complete.
+
+| | Path A: local-only (recommended) | Path B: cloud-forwarded (optional) |
+| --- | --- | --- |
+| Setup guide | [Set up local-only control](docs/local-only-setup.md) | [Recover a cloud session key](docs/get-session-key.md) |
+| Who establishes the session? | Your Local Zappi server | myenergi, through the relay |
+| What must you supply? | `bootstrap.json`, including matching `bootstrap_key_hex` | `session-keys.json`, including recovered `session_key_hex` |
+| Recover a cloud session key first? | **No** | **Yes**, from a supported captured handshake |
+| How is `session-keys.json` created? | Automatically during the local handshake if no key exists | By the capture recovery tool |
+| Ordinary forwarding | `forward_upstream: false` | `forward_upstream: true` |
+| Official app/cloud automations | Unavailable through the local-only server | Available through forwarding |
+| Local dashboard, MQTT and Home Assistant | Yes | Yes |
+| Firmware forwarding | `allow_firmware_forwarding: false` | `allow_firmware_forwarding: false` |
+
+Local-only still uses a session key for encrypted traffic. You do not need to obtain that key beforehand: the server generates and saves it during negotiation, or reuses an existing saved key. The bootstrap key is separate and must match the supported firmware. Neither path requires your myenergi account password or API key.
+
+The verified scope is product 3562, firmware 5.794. Local controls have passed live offline tests; a fresh offline handshake passes firmware emulation and loopback tests. A physical cold reboot into a newly negotiated offline session remains unverified. Local-only provisioning also requires access to matching bootstrap material; see the guide before changing your routing.
 
 ## What works today
 
@@ -11,7 +31,7 @@ Commands travel directly from this server to the charger. With private bootstrap
 | Local mode control | Fast, Eco, Eco+ and Stop; HTTP API and dashboard without login |
 | Device mode readback | Ethernet or decrypted UDP telemetry drives the displayed mode, including physical-device changes |
 | Command confirmation | Requests wait for a charger poll, then matching telemetry; each stage times out after 30 seconds |
-| Reconnect recovery | Automatically recovers keys from supported complete cloud handshakes, including captured exchanges found at startup |
+| Reconnect recovery | Local session negotiation in Path A; supported cloud-key recovery in Path B |
 | Official app coexistence | Optional forwarding of supported control traffic; existing cloud automations can still change the mode |
 | MQTT | Telemetry, state, mode commands, outcomes and Home Assistant discovery |
 | ECO+ allowance | Read from native charger configuration; no minimum-green setter |
@@ -28,7 +48,7 @@ See [device state and confirmation](docs/device-mode.md) for the evidence and [r
 
 ## Set up the server
 
-The verified protocol scope is product 3562, firmware 5.794. You need Python 3.13 or later, a private persistent data directory, a router capable of redirecting the charger's UDP traffic, and a privately recovered session key for initial provisioning. Passive Ethernet capture also needs Linux, access to the charger VLAN, and `NET_RAW` or equivalent privileges.
+The verified protocol scope is product 3562, firmware 5.794. You need Python 3.13 or later, a private persistent data directory, a router capable of redirecting the charger's UDP traffic, and the private key material for your chosen setup path. Passive Ethernet capture also needs Linux, access to the charger VLAN, and `NET_RAW` or equivalent privileges.
 
 Install the dependencies in a virtual environment from the repository directory:
 
@@ -50,9 +70,12 @@ cp config.example.json "$zappi_data/config.json"
 
 Edit `config.json` for your bind address, permitted router IP, upstream routes and device MAC. Set `telemetry_interface` to the charger-facing interface, or leave it `null` to disable Ethernet capture. Configure a private MQTT broker if needed; see [MQTT reporting](docs/mqtt.md).
 
-**First installation:** follow [Get your charger's session key](docs/get-session-key.md) before redirecting charger traffic. The guide covers capture location, reconnect capture, conversion, recovery, private file placement and verification. It creates `session-keys.json` with your device's `serial` and `session_key_hex`, mode 0600. Recovery requires a supported complete handshake; it is not guaranteed after every reboot.
+Complete **one** provisioning path before starting the server:
 
-For independent sessions, also provision private `bootstrap.json` (0600) with `serial`, `product`, `version` and `bootstrap_key_hex` for the exact supported firmware; see [session provisioning](docs/architecture.md). Keys and firmware are never distributed with this project.
+- **Path A: local-only:** follow [local-only setup](docs/local-only-setup.md). Supply `bootstrap.json`, set `forward_upstream: false`, and let the server create `session-keys.json`. Skip cloud capture and session-key recovery.
+- **Path B: cloud-forwarded:** follow [cloud session-key recovery](docs/get-session-key.md). Capture the handshake before installing redirects, create `session-keys.json`, and set `forward_upstream: true`. This path does not require `bootstrap.json`.
+
+Keep `allow_firmware_forwarding: false` in both paths. The supplied `config.example.json` starts with both forwarding options disabled for Path A; **Path B users must set `forward_upstream` to `true` before startup**. Key files must have permissions 0600. Keys and firmware are never distributed with this project.
 
 Start the server using the private directory:
 

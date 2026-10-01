@@ -1,4 +1,6 @@
-# Get your charger's session key
+# Path B: recover a cloud session key
+
+**This is the optional cloud-forwarded path.** If you want local-only control, use [Path A: local-only setup](local-only-setup.md) instead. Local-only users do not need to capture or recover a cloud session key.
 
 Use this guide to create `session-keys.json` for your own charger from a captured cloud handshake. You don't need to know its existing encryption key. Recovery depends on capturing a particular exchange; a reboot alone does not guarantee that exchange.
 
@@ -147,9 +149,9 @@ A failed capture does not prove that your charger is unsupported. It also does n
 
 ## What this enables, and what offline setup still needs
 
-The recovered session key enables decoding and local commands while sharing the supported cloud session. The running observer can recover replacement keys from subsequent complete supported exchanges. A session key can change; it is not a permanent device credential.
+Path B does not require `bootstrap.json`. The recovered session key enables decoding and local commands while sharing the supported cloud session. The running observer can recover replacement keys from subsequent complete supported exchanges. A session key can change; it is not a permanent device credential.
 
-Independent offline operation also requires `bootstrap.json` with bootstrap material for the exact supported firmware. This guide does not produce that material, and the project does not distribute firmware or bootstrap keys. There is currently no general firmware-download or bootstrap-extraction wizard for new installations. See [offline provisioning and verification limits](architecture.md#provisioning) before disabling cloud forwarding.
+To switch to Path A later, provision `bootstrap.json` using the [local-only guide](local-only-setup.md), then disable ordinary forwarding. You can keep your existing `session-keys.json`; the local service can reuse it. Starting with Path A never requires completing this capture guide. Neither guide distributes firmware or bootstrap keys, and there is no general firmware-download wizard.
 
 | Value | Purpose | Obtained by this guide? |
 | --- | --- | --- |

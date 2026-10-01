@@ -1,5 +1,5 @@
 {
-  "forward_upstream": true,
+  "forward_upstream": false,
   "bind": "0.0.0.0",
   "allowed_clients": [
     "192.0.2.1"

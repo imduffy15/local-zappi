@@ -2,6 +2,8 @@
 
 The live relay decrypts device traffic, sends local mode commands, and automatically recovers replacement keys from supported cloud reconnect exchanges. With forwarding disabled and private bootstrap provisioning, the runtime uses the server-chosen session negotiator and local keepalives. Cold handshakes pass firmware emulation; physical cold-reboot verification remains outstanding. See [runtime architecture](architecture.md) and [verified device control](device-mode.md).
 
+For setup, choose [Path A: local-only](local-only-setup.md) (bootstrap provisioning; no cloud key recovery) or [Path B: cloud-forwarded](get-session-key.md) (captured session key; no bootstrap file). This page explains the protocol behind those two paths.
+
 ## Encryption and identity checks
 
 The firmware uses AES-256-CTR for the recovered session. Encryption begins at UDP payload offset 16 and restarts with counter `f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff` for each packet. The IV bytes also occur in the firmware image at `0x96553`. The key record supports an XOR alternative, but the recovered record specifies AES. The implementation currently supports AES only.
@@ -56,7 +58,7 @@ The emulator runs the firmware's actual handshake builder, receiver, key selecti
 
 ## Recover a key from a private capture
 
-For a first installation, follow [Get your charger’s session key](get-session-key.md). It includes packet capture and conversion commands, file placement and failure diagnosis.
+For a first **cloud-forwarded** installation, follow [Path B: recover a cloud session key](get-session-key.md). That guide includes packet capture and conversion commands, file placement and failure diagnosis. Local-only installations should use [Path A](local-only-setup.md) and skip capture recovery.
 
 The offline tool accepts a JSON list of captured UDP payloads, with a `hex` field in capture order. It requires a suitable complete exchange and later handshake confirmation. It creates the output with mode 0600, refuses to overwrite an existing file and never prints the recovered key.
 

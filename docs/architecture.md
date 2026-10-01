@@ -6,7 +6,13 @@ With forwarding enabled, the relay shares the charger/cloud session and recovers
 
 ## Provisioning
 
+Choose [Path A: local-only](local-only-setup.md) or [Path B: cloud-forwarded](get-session-key.md). They have different initial key requirements.
+
+For Path A, no recovered `session_key_hex` is required. The server generates a session key during local negotiation when none is saved, persists it in `session-keys.json`, and grants it to the charger. An existing saved key can be reused.
+
 Use product 3562, firmware 5.794 only within the verified scope. Place `bootstrap.json` in the private data directory, permissions 0600, containing `serial`, `product` (3562), `version` (5794), and `bootstrap_key_hex`. The bootstrap material must come from the exact owned firmware; do not substitute arbitrary keys or publish this file. `session-keys.json` stores the current session key. The bootstrap exchange installs a session key in RAM; it does not flash firmware.
+
+For Path B, supply a recovered `session-keys.json` and enable ordinary forwarding. No bootstrap file is required. This mode shares the cloud-negotiated session. Firmware forwarding defaults to disabled in both paths.
 
 ## Requests and state
 
